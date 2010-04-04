@@ -1,0 +1,1481 @@
+###################################################
+### chunk number 1: SourceR
+###################################################
+library(favir)
+InitPaper()
+
+LookupDFMult <- function(df, ..., allow.NULL=FALSE) {
+  # Like LookupDF, but allow each argument to have multiple values
+  # The output will be a DF with one row for each element in the args
+  lookup.args <- data.frame(...)
+  result <- data.frame()
+  for (i in RowIndicies(lookup.args)) {
+    single.lookup.args <- c(list(df=df),
+                            as.list(lookup.args[i,, drop=FALSE]),
+                            list(allow.NULL=allow.NULL))
+    output <- do.call(LookupDF, single.lookup.args)
+    result <- rbind(result, output)
+  }
+  return(result)
+}
+
+TransposeDF <- function(list.of.lists) {
+  # Create data frame from a list of lists
+  #
+  # Each list should have the same names.  If the large list has
+  # names, they will be used as the data frame row names.
+  num.rows <- length(list.of.lists)
+  if (identical(num.rows, 0))
+    return(data.frame())
+
+  first.list <- list.of.lists[[1]]
+  Assert(length(first.list) >= 1, "First element of list.of.lists is empty")
+
+  # Initialize df with right columns and row names
+  return.df <- list()
+  Assert(!any(is.null(names(first.list))), "Each list must have full names")
+  for (name in names(first.list))
+    return.df[[name]] <- rep(NA, num.rows)
+  return.df <- as.data.frame(return.df)
+  
+  # Now populate row by row
+  for (i in 1:num.rows) {
+    cur.row <- list.of.lists[[i]]
+    for (name in names(cur.row))
+      return.df[i, name] <- cur.row[[name]]
+  }
+
+  # Add row names and return
+  rownames(return.df) <- names(list.of.lists)
+  return(return.df)
+}
+
+################### Example Input Data -- Replace this with your own
+
+incurred.devel.df <- data.frame(origin = c(1995, 1996, 1997, 1998,
+                                  1999, 2000, 2001, 2002, 2003, 2004,
+                                  2005, 2006, 1995, 1996, 1997, 1998,
+                                  1999, 2000, 2001, 2002, 2003, 2004,
+                                  2005, 1995, 1996, 1997, 1998, 1999,
+                                  2000, 2001, 2002, 2003, 2004, 1995,
+                                  1996, 1997, 1998, 1999, 2000, 2001,
+                                  2002, 2003, 1995, 1996, 1997, 1998,
+                                  1999, 2000, 2001, 2002, 1995, 1996,
+                                  1997, 1998, 1999, 2000, 2001, 1995,
+                                  1996, 1997, 1998, 1999, 2000, 1995,
+                                  1996, 1997, 1998, 1999, 1995, 1996,
+                                  1997, 1998, 1995, 1996, 1997, 1995,
+                                  1996, 1995),
+                                dev = c(3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+                                  3, 3, 15, 15, 15, 15, 15, 15, 15,
+                                  15, 15, 15, 15, 27, 27, 27, 27, 27,
+                                  27, 27, 27, 27, 27, 39, 39, 39, 39,
+                                  39, 39, 39, 39, 39, 51, 51, 51, 51,
+                                  51, 51, 51, 51, 63, 63, 63, 63, 63,
+                                  63, 63, 75, 75, 75, 75, 75, 75, 87,
+                                  87, 87, 87, 87, 99, 99, 99, 99, 111,
+                                  111, 111, 123, 123, 135),
+                                value = c(44, 42, 17, 10, 13, 2, 4, 2,
+                                  3, 4, 21, 13, 1331, 1244, 1088, 781,
+                                  937, 751, 1286, 911, 1398, 1130,
+                                  915, 3319, 3508, 3438, 3135, 3506,
+                                  2639, 3570, 5023, 4021, 3981, 4020,
+                                  4603, 4169, 4085, 4828, 3622, 4915,
+                                  6617, 4825, 4232, 4842, 4371, 4442,
+                                  5447, 3931, 5377, 7194, 4252, 4970,
+                                  4482, 4777, 5790, 4077, 5546, 4334,
+                                  5059, 4626, 4914, 6112, 4244, 4369,
+                                  5083, 4734, 5110, 6295, 4386, 5155,
+                                  4794, 5176, 4395, 5205, 4804, 4401,
+                                  5205, 4399))
+
+## Another possible incurred triangle
+## incurred.devel.df <- data.frame(origin = c(1981, 1982, 1983, 1984,
+##                                   1985, 1986, 1987, 1988, 1989, 1990,
+##                                   1981, 1982, 1983, 1984, 1985, 1986,
+##                                   1987, 1988, 1989, 1981, 1982, 1983,
+##                                   1984, 1985, 1986, 1987, 1988, 1981,
+##                                   1982, 1983, 1984, 1985, 1986, 1987,
+##                                   1981, 1982, 1983, 1984, 1985, 1986,
+##                                   1981, 1982, 1983, 1984, 1985, 1981,
+##                                   1982, 1983, 1984, 1981, 1982, 1983,
+##                                   1981, 1982, 1981),
+##                                 dev = c(9, 9, 9, 9, 9, 9, 9, 9, 9,
+##                                   9, 21, 21, 21, 21, 21, 21, 21, 21,
+##                                   21, 33, 33, 33, 33, 33, 33, 33, 33,
+##                                   45, 45, 45, 45, 45, 45, 45, 57, 57,
+##                                   57, 57, 57, 57, 69, 69, 69, 69, 69,
+##                                   81, 81, 81, 81, 93, 93, 93, 105,
+##                                   105, 117 ),
+##                                 value = c(5012L, 106L, 3410L, 5655L,
+##                                   1092L, 1513L, 557L, 1351L, 3133L,
+##                                   2063L, 8269L, 4285L, 8992L, 11555L,
+##                                   9565L, 6445L, 4020L, 6947L, 5395L,
+##                                   10907L, 5396L, 13873L, 15766L,
+##                                   15836L, 11702L, 10946L, 13112L,
+##                                   11805L, 10666L, 16141L, 21266L,
+##                                   22169L, 12935L, 12314L, 13539L,
+##                                   13782L, 18735L, 23425L, 25955L,
+##                                   15852L, 16181L, 15599L, 22214L,
+##                                   26083L, 26180L, 18009L, 15496L,
+##                                   22863L, 27067L, 18608L, 16169L,
+##                                   23466L, 18662L, 16704L, 18834L))
+incurred.devel.tri <- as.triangle(incurred.devel.df)
+incurred.devel.tri.df <- cbind(data.frame(origin=1995:2006),
+                               as.data.frame(unclass(incurred.devel.tri)))
+
+paid.devel.df <- data.frame(origin = c(1995, 1996, 1997, 1998, 1999,
+                              2000, 2001, 2002, 2003, 2004, 2005,
+                              2006, 1995, 1996, 1997, 1998, 1999,
+                              2000, 2001, 2002, 2003, 2004, 2005,
+                              1995, 1996, 1997, 1998, 1999, 2000,
+                              2001, 2002, 2003, 2004, 1995, 1996,
+                              1997, 1998, 1999, 2000, 2001, 2002,
+                              2003, 1995, 1996, 1997, 1998, 1999,
+                              2000, 2001, 2002, 1995, 1996, 1997,
+                              1998, 1999, 2000, 2001, 1995, 1996,
+                              1997, 1998, 1999, 2000, 1995, 1996,
+                              1997, 1998, 1999, 1995, 1996, 1997,
+                              1998, 1995, 1996, 1997, 1995, 1996,
+                              1995),
+                            dev = c(3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+                              3, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+                              15, 15, 27, 27, 27, 27, 27, 27, 27, 27,
+                              27, 27, 39, 39, 39, 39, 39, 39, 39, 39,
+                              39, 51, 51, 51, 51, 51, 51, 51, 51, 63,
+                              63, 63, 63, 63, 63, 63, 75, 75, 75, 75,
+                              75, 75, 87, 87, 87, 87, 87, 99, 99, 99,
+                              99, 111, 111, 111, 123, 123, 135),
+                            value = c(3, 1, 1, 1, 1, 1, 1, 1, 1, 4, 1,
+                              1, 503, 465, 534, 329, 399, 328, 443,
+                              401, 326, 524, 323, 2474, 2621, 2541,
+                              2204, 2496, 1849, 2566, 3078, 2372,
+                              2784, 3719, 4122, 3807, 3673, 4304,
+                              3124, 4208, 5459, 4132, 4094, 4618,
+                              4192, 4242, 5197, 3693, 5074, 6748,
+                              4194, 4882, 4374, 4616, 5674, 3966,
+                              5474, 4303, 4997, 4544, 4827, 6031,
+                              4164, 4350, 5041, 4679, 5051, 6244,
+                              4382, 5111, 4761, 5145, 4394, 5172,
+                              4787, 4394, 5191, 4398))
+paid.devel.tri <- as.triangle(paid.devel.df)
+paid.devel.tri.df <- cbind(data.frame(origin=1995:2006),
+                           as.data.frame(unclass(paid.devel.tri)))
+
+premium.df <- data.frame(origin=1995:2006, premium=rep(6000, 12))
+premium.df$apriori.loss <- 0.8*premium.df$premium
+premium.df$apriori.ratio <- premium.df$apriori.loss / premium.df$premium
+
+################### LDF Selection functions
+
+LDF.GetAgeToAge <- function(devel.df) {
+  # Return dataframe of all age-to-age LDFs
+  #
+  # Arg: development dataframe with origin, dev, and value fields
+  #
+  # Output: Dataframe of LDFs with fields origin, start.dev, end.dev,
+  # and LDF.
+  sorted.df <- devel.df[order(devel.df$origin, devel.df$dev), ]
+  len <- nrow(sorted.df)
+  Assert(len >= 2, "devel.df has too few rows")
+  
+  result <- data.frame(origin=c(), start.dev=c(), end.dev=c(), LDF=c())
+  for (i in 1:(len - 1)) {
+    cur.row <- sorted.df[i, ]
+    next.row <- sorted.df[i+1, ]
+
+    if (cur.row$origin != next.row$origin)
+      next
+    if (cur.row$value == 0 || is.na(cur.row$value) || is.na(next.row$value))
+      next
+    LDF <- next.row$value / cur.row$value
+    result <- rbind(result, list(origin=cur.row$origin, start.dev=cur.row$dev,
+                                 end.dev=next.row$dev, LDF=LDF))
+  }
+  return(result)
+}
+  
+LDF.GetAgeToAgeMatrix <- function(age.df) {
+  # Return matrix of AgeToAge factors
+  #
+  # Arg: age-to-age data frame as produced by LDF.GetAgeToAge
+  # Output: "formatted" matrix of age-to-age factors
+  origins <- sort(unique(age.df$origin))
+  dev.df <- unique(data.frame(from=age.df$start.dev, to=age.df$end.dev))
+  def.df <- dev.df[order(dev.df$from, dev.df$to), ]
+
+  result <- matrix(nrow=length(origins), ncol=nrow(dev.df))
+  rownames(result) <- origins
+  colnames(result) <- paste(dev.df$from, "to", dev.df$to)
+  for (i in seq(along=origins)) {
+    origin <- origins[i]
+    for (j in seq(along=colnames(result))) {
+      LDF <- LookupDF(age.df, origin=origin, start.dev=dev.df$from[j],
+                      end.dev=dev.df$to[j], allow.NULL=TRUE)$LDF
+      if (!is.null(LDF))
+        result[i, j] <- LDF
+    }
+  }
+  return(result)
+}
+
+LDF.getAverages <- function(triangle.df, LDF.df) {
+  # Return DF showing different ways of averaging the LDFs
+  #
+  # Args: Two data frames, one with raw losses, and the other of LDFs,
+  # like the kind produced by LDF.GetAgeToAge
+  #
+  # Output: A data frame with the fields method (char), start.dev
+  # (number), end.dev (number), and LDF (number)
+  GetLDFs <- function(start.dev, end.dev) {
+    # Get data frame of matching LDFs from LDF.df, sorted by origin
+    sub.df <- LDF.df[LDF.df$start.dev == start.dev &
+                     LDF.df$end.dev == end.dev, ]
+    return(sub.df[order(sub.df$origin), ])
+  }
+
+  GetOrigins <- function(start.dev, end.dev) {
+    # Return DF of start.value, end.value matching given start and end devs
+    start.df <- triangle.df[triangle.df$dev == start.dev, ]
+    end.df <- triangle.df[triangle.df$dev == end.dev, ]
+    joined.df <- merge(start.df, end.df, by="origin")
+    pruned.df <- data.frame(origin=joined.df$origin,
+                            start.value=joined.df$value.x,
+                            end.value=joined.df$value.y)
+    return(pruned.df[order(pruned.df$origin), ])
+  }
+  
+  AvgLast <- function(start.dev, end.dev, n) {
+    # Return straight average of last n LDFs
+    sub.df <- GetLDFs(start.dev, end.dev)
+    num.rows <- nrow(sub.df)
+    if (num.rows <= n)
+      return(mean(sub.df$LDF))
+    else return(mean(sub.df$LDF[(num.rows - n + 1):num.rows]))
+  }
+
+  AvgXHiLo <- function(start.dev, end.dev) {
+    # Return average, skipping the high and low LDFs (if at least 3)
+    LDFs <- sort(GetLDFs(start.dev, end.dev)$LDF)
+    if (length(LDFs) >= 3)
+      return(mean(LDFs[2:(length(LDFs) - 1)]))
+    return(mean(LDFs))
+  }
+  
+  AvgWeighted <- function(start.dev, end.dev, n) {
+    # Return weighted average of last n LDFs
+    sub.df <- GetOrigins(start.dev, end.dev)
+    num.rows <- nrow(sub.df)
+    if (nrow(sub.df) > n)
+      sub.df <- sub.df[(num.rows - n + 1):num.rows, ]
+    if (sum(sub.df$start.value) == 0)
+      return(NA)
+    return(sum(sub.df$end.value) / sum(sub.df$start.value))
+  }
+
+  interval.df <- unique(data.frame(start.dev=LDF.df$start.dev,
+                                   end.dev=LDF.df$end.dev))
+  result.df <- data.frame(method=c(), start.dev=c(), end.dev=c(), LDF=c())
+  for (i in RowIndicies(interval.df)) {
+    start.dev <- interval.df$start.dev[i]
+    end.dev <- interval.df$end.dev[i]
+    avg <- data.frame(method="Average", start.dev=start.dev,
+                      end.dev=end.dev, LDF=AvgLast(start.dev, end.dev, Inf))
+    avg.xhilo <- data.frame(method="Avg xHi,Lo", start.dev=start.dev,
+                            end.dev=end.dev, LDF=AvgXHiLo(start.dev, end.dev))
+    avg.last5 <- data.frame(method="Avg Last 5", start.dev=start.dev,
+                            end.dev=end.dev,
+                            LDF=AvgLast(start.dev, end.dev, 5))
+    avg.weighted <- data.frame(method="Weighted Avg",
+                               start.dev=start.dev, end.dev=end.dev,
+                               LDF=AvgWeighted(start.dev, end.dev, Inf))
+    avg.wlast5 <- data.frame(method="Weighted Last 5",
+                             start.dev=start.dev, end.dev=end.dev,
+                             LDF=AvgWeighted(start.dev, end.dev, 5))
+    result.df <- rbind(result.df, avg, avg.xhilo, avg.last5, avg.weighted,
+                       avg.wlast5)
+  }
+  return(result.df)
+}
+
+LDF.getAvgMatrix <- function(avg.df) {
+  # Return matrix of LDFs averaged in various ways
+  #
+  # Arg: a data frame of averages, as given by LDF.getAverages
+  #
+  # Output: a labeled matrix of averages
+  methods <- unique(avg.df$method)
+  dev.df <- unique(data.frame(from=avg.df$start.dev, to=avg.df$end.dev))
+  dev.df <- dev.df[order(dev.df$from, dev.df$to), ]
+
+  result <- matrix(nrow=length(methods), ncol=nrow(dev.df))
+  rownames(result) <- methods
+  colnames(result) <- paste(dev.df$from, "to", dev.df$to)
+
+  for (i in seq(along=methods)) {
+    method <- methods[i]
+    for (j in seq(along=colnames(result))) {
+      avg <- LookupDF(avg.df, method=method, start.dev=dev.df$from[j],
+                      end.dev=dev.df$to[j], allow.NULL=TRUE)$LDF
+      if (!is.null(avg))
+        result[i, j] <- avg
+    }
+  }
+  return(result)
+}
+
+LDF.AgeToUlt <- function(age.to.age.df, tail.factor) {
+  # Return data frame of LDFs to ultimate
+  #
+  # Args: a data frame of age to age factors, as produced by
+  # LDF.getAgeToAge, and a tail factor to ultimate
+  #
+  # Output: a data frame with fields dev (age) and LDF (to ultimate)
+  Assert(length(unique(age.to.age.df$start.dev)) == nrow(age.to.age.df))
+  sorted.df <- age.to.age.df[order(-age.to.age.df$start.dev), ]
+  df <- data.frame(dev=c(sorted.df$end.dev[1], sorted.df$start.dev),
+                   LDF=cumprod(c(tail.factor, sorted.df$LDF)))
+  return(df[order(df$dev), ])
+}
+
+LDF.AgeToUltFDF <- function(age.to.ult.df, label="LDFs to Ultimate",
+                            textsize="normalsize",
+                            caption="Selected LDFs to Ultimate") {
+  # Return printable display of final age to ultimate LDFs
+  l <- c(list("LDFs to Ultimate"), as.list(age.to.ult.df$LDF))
+  fdf <- FavirDF(as.data.frame(l), label=label, caption=caption)
+  names(fdf) <- c("X", as.character(age.to.ult.df$dev))
+  headings <- as.character(age.to.ult.df$dev)
+  names(headings) <- as.character(age.to.ult.df$dev)
+  FieldHeadings(fdf) <- c(list(X=""), headings)
+  FieldGroup(fdf, "LDF") <- 2:length(fdf)
+  GroupHeading(fdf, "LDF") <- "Development Age"
+  TextSize(fdf) <- textsize
+  return(fdf)
+}
+
+###################### Tail Methods
+  
+Tail.McClenahan <- function(LDFs) {
+  # Compute tail method according to McClenahan's method
+  #
+  # Args: LDFs, a vector of age to age devel factors
+  #
+  # Output: single age to ultimate tail factor computed using
+  # McClenahan's method
+  LDFs <- pmax(LDFs, 1.0)
+  if (all(LDFs <= 1.000001))
+    return(1.0)
+  
+  # This method doesn't work well with LDFs near zero, so bump them up
+  LDFs <- ifelse(LDFs <= 1.000001, 1.000001, LDFs)
+
+  cumulative.loss <- cumprod(c(1.0, LDFs))
+  inc.loss <- (cumulative.loss[2:length(cumulative.loss)] -
+               cumulative.loss[1:(length(cumulative.loss) - 1)])
+  tail.model <- lm(log(inc.loss) ~ seq(along=inc.loss))
+  r <- exp(coef(tail.model)[2])
+  remaining.loss <- sum(inc.loss[length(inc.loss)]*r^(1:100))
+  return(1 + remaining.loss / Last(cumulative.loss))
+}
+
+Tail.ModMcClenahan <- function(devs, cumulative) {
+  # Get tail function according to modified McClenahan's method
+  #
+  # This is a modified version of McClenahan's function.  Unlike some
+  # tail functions, it allows the date of loss developments to be
+  # given explicitly, and returns a function extrapolating future
+  # payments.
+  #
+  # Args: devs, a vector of ages (e.g. accident year age in months)
+  # cumulative, a vector of cumulative payments at each age
+  #
+  # Output: a function from development age to cumulative loss.
+  Assert(length(devs) >= 2 && length(devs) == length(cumulative))
+  len <- length(devs)
+  df <- data.frame(dev=devs, cumulative=cumulative)
+  start <- c(Last(df$cumulative), 1/Last(df$dev))
+  names(start) <- c("ult", "r")
+  cum.model <- nls(cumulative ~ ult * (1 - exp(-r*dev)), df, start=start)
+
+  # Fit to last payment
+  r <- coef(cum.model)["r"]
+  ult <- coef(cum.model)["ult"]
+  pred.last <- ult * (1 - exp(-r*Last(devs)))
+  actual.last <- Last(cumulative)
+  
+  # Now construct tail function
+  tail.func <- function(dev) {
+    # Return cumulative paid to date given dev
+    return(ult * actual.last / pred.last * (1 - exp(-r*dev)))
+  }
+  return(tail.func)
+}
+
+Tail.ExponentialDecay <- function(LDFs) {
+  # Compute tail method by the exponential decay method, with Boor's
+  # "improvement 2"
+  #
+  # Args: LDFs, a vector of age to age devel factors
+  #
+  # Output: single age to ultimate tail factor computed by assuming
+  # exponential decay of LDFs.
+  LDFs <- pmax(LDFs, 1.0)
+  if (all(LDFs <= 1.000001))
+    return(1.0)
+  
+  # This method doesn't work well with LDFs near zero, so bump them up
+  LDFs <- ifelse(LDFs <= 1.000001, 1.000001, LDFs)
+  tail.model <- lm(log(LDFs - 1) ~ seq(along=LDFs))
+  r <- exp(coef(tail.model)[2])
+  future.LDFs <- 1 + (Last(LDFs)-1)*r^(1:100)
+  return(prod(future.LDFs))
+}
+
+Tail.Sherman <- function(LDFs, future.links=15) {
+  # Compute tail method by Sherman's method
+  #
+  # Args: LDFs, a vector of age to age devel factors
+  # future.links, the number of years to extrapolate to
+  #
+  # Output: single age to ultimate tail factor computed by assuming
+  # power law governs LDF decay
+  LDFs <- pmax(LDFs, 1.0)
+  if (all(LDFs <= 1.000001))
+    return(1.0)
+  # This method doesn't work well with LDFs near zero, so bump them up
+  LDFs <- ifelse(LDFs <= 1.000001, 1.000001, LDFs)
+
+  log.year <- log(seq(along=LDFs))
+  tail.model <- lm(log(LDFs - 1) ~ log.year)
+  future.indep <- data.frame(log.year=log(Last(seq(along=LDFs)) +
+                               0:future.links))
+  future.LDFs <- 1 + exp(predict(tail.model, newdata=future.indep))
+  # Now fit future.LDFs to last link and cap at 1.0
+  tail <- (prod(future.LDFs[2:length(future.LDFs)]) *
+           (Last(LDFs) / future.LDFs[1]))
+  return(max(tail, 1.0))
+}
+
+Tail.Summary <- function(LDF.age.to.age.df) {
+  # Return matrix summarizing tail results
+  #
+  # Args: data frame with fields start.dev, end.dev, and LDF
+  # Output: matrix with one column and named rows
+  LDFs <- LDF.age.to.age.df$LDF
+  mcclenahan <- Tail.McClenahan(LDFs)
+  ModMcc <- Tail.ModMcClenahan(LDF.age.to.age.df$end.dev, cumprod(LDFs))
+  mod.mcc.tail <- ModMcc(1e6) / ModMcc(Last(LDF.age.to.age.df$end.dev))
+  expon <- Tail.ExponentialDecay(LDFs)
+  sherman <- Tail.Sherman(LDFs)
+  result <- matrix(c(mcclenahan, mod.mcc.tail, expon, sherman), nrow=4)
+  colnames(result) <- "Tail Factor to Ultimate"
+  rownames(result) <- c("McClenahan Method (exponential)",
+                        "Modified McClenahan Method",
+                        "Exponential Decay of LDFs to 1.0",
+                        "Sherman Method (inverse power law)")
+  return(result)
+}
+  
+
+############################# LDF Interpolation
+
+LDF.MakeInterpolate <- function(LDFs, devs, TailCumulative) {
+  # Use simple algorithm to interpolate LDFs
+  #
+  # Input: vectors of LDFs to ultimate and development ages (same length)
+  # Also takes a tail function that computes cumulative at dev.
+  #
+  # Output: Function from development age(s) to LDF to ultimate(s).
+  Assert(length(LDFs) >= 2 && length(LDFs) == length(devs))
+
+  # Make tail function
+  tail.scale <- Last(LDFs) * TailCumulative(Last(devs))
+  TailLDFs <- function(dev) tail.scale / TailCumulative(dev)
+  
+  # Make head function
+  power.b <- log((LDFs[1] - 1) / (LDFs[2] - 1)) / log(devs[1] / devs[2])
+  power.a <- (LDFs[1] - 1) / devs[1] ^ power.b
+  head.func <- function(dev) (power.a * dev ^ power.b) + 1
+
+  # For body, add extra point at head and tail for smoothness
+  prefix <- min(devs) * .99
+  suffix <- max(devs) * 1.01
+  body.func <- splinefun(c(prefix, devs, suffix),
+                         c(head.func(prefix), LDFs, TailLDFs(suffix)))
+  
+  InterpolateLDF <- function(dev.vec) {
+    # Return interpolated LDF given development age
+    return(ifelse(dev.vec < min(devs), head.func(dev.vec),
+                  ifelse(dev.vec > max(devs), TailLDFs(dev.vec),
+                         body.func(dev.vec))))
+  }
+  return(InterpolateLDF)
+}
+
+                            
+LDF.getUlt <- function(LDF.selected) {
+  # Return matrix summarizing selected LDFs
+  LDF.ultimate <- LDF.selected
+  for (i in (length(LDF.ultimate)-1):1)
+    LDF.ultimate[i] <- LDF.ultimate[i+1] * LDF.selected[i]
+  pct.reported <- 100/LDF.ultimate
+
+  result <- rbind(LDF.selected, LDF.ultimate, pct.reported)
+  rownames(result) <- c('Selected LDFs', 'LDFs to Ult', '% Reported')
+  return (result)
+}
+
+Latest <- function(df.tri) {
+  # Return the latest diagonal in data frame format from a data frame triangle
+  helper <- function(origin) {
+    # Return dev and value as list for last eval given origin
+    sub.df <- df.tri[df.tri$origin==origin, ]
+    if (nrow(sub.df) < 1)
+      return(list(origin=NA, dev=NA, value=NA))
+    return(LookupDF(df.tri, origin=origin, dev=max(sub.df$dev)))
+  }
+  origins <- unique(df.tri$origin)
+  return(TransposeDF(Map(helper, origins)))
+}
+
+
+
+######################### Basic method functions
+
+RemoveNARows <- function(df) {
+  # Remove any row with an NA from a data frame and return result
+  for (i in seq(along=df))
+    df <- df[!is.na(df[[i]]), ]
+  return(df)
+}
+
+ChainladderFDF <- function(latest.df, LDF.selected.ult) {
+  # Return a favir data frame indicating ultimate for each origin
+  # using Chain Ladder on
+  result <- latest.df
+  result$ult.ldf <- LookupDFMult(LDF.selected.ult, dev=latest.df$dev)$LDF
+  result$pct.devel <- 1 / result$ult.ldf
+  result$ult <- result$value * result$ult.ldf
+  result <- FavirDF(result)
+  FieldHeadings(result) <- list(dev="Development Age", value="Latest Diagonal",
+                                ult.ldf="LDF to Ultimate",
+                                pct.devel="Percent Developed",
+                                ult="Ultimate Loss")
+  FieldGroup(result, "money") <- c("value", "ult")
+  FieldGroup(result, "origin") <- "origin"
+  FieldGroup(result, "dev") <- "dev"
+  FieldGroup(result, "LDF") <- "ult.ldf"
+  FieldGroup(result, "percent") <- "pct.devel"
+  return(result)
+}
+
+Bornhuetter <- function(LDFs, latest, apriori) {
+  # Return a vector of Bornhuetter-Ferguson developed ultimate losses
+  #
+  # Args: LDFs: a vector of LDFs to ultimate
+  # latest: a vector of latest loss valuations matching LDFs
+  # apriori: a vector of pre-data loss estimates
+  Assert(length(LDFs) == length(latest) && length(latest) == length(apriori))
+  return((1 - 1/LDFs) * apriori + latest)
+}  
+
+BornhuetterFDF <- function(latest.df, LDF.selected.ult, apriori.byyear) {
+  # Return a favir data frame indicating ultimate for each origin
+  # using Bornhuetter-Ferguson
+  df <- latest.df
+  df$ult.ldf <- LookupDFMult(LDF.selected.ult, dev=latest.df$dev)$LDF
+  df$pct.devel <- 1 / df$ult.ldf
+  df$a.priori <- LookupDFMult(apriori.byyear,
+                              origin=latest.df$origin)$apriori.loss
+  df$ult <- Bornhuetter(df$ult.ldf, df$value, df$a.priori)
+
+  fdf <- FavirDF(df)
+  FieldHeadings(fdf) <- list(dev="Development Age", value="Latest Diagonal",
+                             ult.ldf="LDF to Ultimate",
+                             pct.devel="Percent Developed",
+                             a.priori="A Priori Loss",
+                             ult="BF Ultimate Loss")
+  FieldGroup(fdf, "origin") <- "origin"
+  FieldGroup(fdf, "money") <- c("value", "a.priori", "ult")
+  FieldGroup(fdf, "dev") <- "dev"
+  FieldGroup(fdf, "percent") <- "pct.devel"
+  return(fdf)
+}
+
+CapeCod <- function(latest.df, LDF.selected.ult, premium.byyear) {
+  # Run CapeCod method to compute ultimate losses
+  #
+  # Args: Two data frames, one that has the latest evaluations by year,
+  # another with matching LDFs
+  #
+  # Output: a favir data frame with the fields
+  # premium - the premium used for the computation
+  # used.premium - the Cape Cod "used up premium" for each year
+  # exp.ratio - the ratio of loss to used premium
+  df <- data.frame(origin=latest.df$origin, value=latest.df$value)
+  df$LDF <- LookupDFMult(LDF.selected.ult, dev=latest.df$dev)$LDF
+  df$premium <- LookupDFMult(premium.byyear, origin=latest.df$origin)$premium
+  df$used.premium <- df$premium / df$LDF
+  df$exp.ratio <- df$value / df$used.premium
+
+  fdf <- FavirDF(df)
+  FieldHeadings(fdf) <- list(value="Latest Diagonal", LDF="LDF to Ultimate",
+                             premium="Total Premium",
+                             used.premium="Used-Up Premium",
+                             exp.ratio="Expected Loss Ratio")
+  FieldGroup(fdf, "origin") <- "origin"
+  FieldGroup(fdf, "money") <- c("value", "premium", "used.premium")
+  FieldGroup(fdf, "percent") <- "exp.ratio"
+  FieldGroup(fdf, "LDF") <- "LDF"
+  return(fdf)
+}
+
+MatrixToFDF <- function(matrix, ..., rowname.col=NULL) {
+  # Convenience function: convert matrix in one step to favir data frame
+  #
+  # if row.name.col is not NULL, row names are added to the data frame
+  # under a separate name
+  df <- as.data.frame(matrix)
+  if (!is.null(rowname.col)) {
+    rowname.df <- data.frame(rownames(matrix))
+    names(rowname.df) <- rowname.col
+    df <- cbind(rowname.df, df)
+  }
+  return(FavirDF(df, ...))
+}
+
+PrintCombinedTable <- function(triangle.fdf, long.df, label="", caption="",
+                               orientation="sideways", textsize=NULL) {
+  # Print the combined three-layer LDF table
+  #
+  # Args:
+  # triangle.fdf - a favir data frame
+  # long.df - the same triangle in long form
+  # label, caption, textsize, orientation - see arguments to FavirDF
+  #
+  # Output: A data frame of LDFs averaged in various ways
+  # It also prints the latex of the combined table.
+  combined.table.head <- triangle.fdf
+  Label(combined.table.head) <- label
+  Caption(combined.table.head) <- caption
+  if (!is.null(textsize))
+    TextSize(combined.table.head) <- textsize
+
+  LDF.age.to.age <- LDF.GetAgeToAge(long.df)
+  LDF.age.matrix <- LDF.GetAgeToAgeMatrix(LDF.age.to.age)
+  LDF.age.fdf <- MatrixToFDF(LDF.age.matrix, label="Simple LDFs",
+                             rowname.col="origin")
+  FieldHeadings(LDF.age.fdf) <- list(origin=origin.field.heading)
+  FieldGroup(LDF.age.fdf, "LDF") <- 2:length(LDF.age.fdf)
+  GroupHeading(LDF.age.fdf, "LDF") <- "Age to Age Loss Development Factors"
+
+  LDF.avg.df <- LDF.getAverages(long.df, LDF.age.to.age)
+  LDF.avg.fdf <- MatrixToFDF(LDF.getAvgMatrix(LDF.avg.df), rowname.col="method",
+                             orientation=orientation, label="Average LDFs")
+  FieldHeadings(LDF.avg.fdf) <- list(method="")
+  FieldGroup(LDF.avg.fdf, "LDF") <- 2:length(LDF.age.fdf)
+  GroupHeading(LDF.avg.fdf, "LDF") <- "Averaged Age-to-Age LDFs"
+
+  print(RBindPreLatex(PreLatexFDF(combined.table.head), PreLatexFDF(LDF.age.fdf),
+                      PreLatexFDF(LDF.avg.fdf)))
+  return(LDF.avg.df)
+}
+
+MakeSummaryFDFs <- function(summary.df, origin.field.heading) {
+  # Return summary FDFs, possibly splitting them between multiple tables
+  maxcols <- 5
+  summary.origins <- unique(summary.df$origin)
+  summary.methods <- unique(summary.df$method)
+  origin.groups <- split(summary.origins,
+                         (seq(along=summary.origins) - 1) %/% maxcols)
+
+  MakeFDF <- function(origins) {
+    # Return FDF with columns for the origins given
+    subdf <- summary.df[summary.df$origin %in% origins, ]
+    summary.wide <- reshape::recast(subdf, method ~ origin,
+                                    id.var=c("method", "origin"))
+    Assert(nrow(summary.wide) == length(summary.methods))
+    Assert(ncol(summary.wide) >= 2 && ncol(summary.wide) <= maxcols + 1)
+    fdf <- FavirDF(summary.wide, label="summary",
+                             caption="Multi-method Development Summary")
+    FieldGroup(fdf, "money") <- 2:length(fdf)
+    FieldHeadings(fdf) <- list(method="Method")
+    if (Last(names(fdf)) == "Total" && length(fdf) > 2) {
+      FieldGroup(fdf, "origins") <- 2:(length(fdf) - 1)
+      GroupHeading(fdf, "origins") <- paste("Ultimate by", origin.field.heading)
+    } else if (Last(names(fdf)) != "Total") {
+      FieldGroup(fdf, "origins") <- 2:length(fdf)
+      GroupHeading(fdf, "origins") <- paste("Ultimate by", origin.field.heading)
+    }
+    return(fdf)
+  }
+
+  return(lapply(origin.groups, MakeFDF))
+}
+
+################################## Functions for regression reserving
+
+MakeDevModels <- function(dev, mack.lm) {
+  # Given the mack lm model, produce models with intercepts
+  #
+  # Args:
+  # dev - development period name
+  # mack.lm - the lm object produced by the MackChainLadder function
+  #
+  # Output: A list with three elements
+  # link.lm - the default mack model
+  # intercept.lm - a lm object with just an intercept term
+  # both.lm - model with both intercept and link
+  df <- data.frame(increment=mack.lm$model$y - mack.lm$model$x,
+                   start=mack.lm$model$x, weights=mack.lm$weights)
+  return(list(dev=dev,
+              link.lm=lm(increment ~ start + 0, weights = weights, data=df),
+              intercept.lm=lm(increment ~ 1, weights = weights, data=df),
+              both.lm=lm(increment ~ start, weights = weights, data=df)))
+}
+
+GetLinkDF <- function(dev, link.lm, intercept.lm, both.lm) {
+  # Return data frame about fitting a single development period
+  #
+  # Args:
+  # dev - development period as a constant
+  # link.lm - the lm object produced by the MackChainLadder function
+  # intercept.lm - lm object with just an intercept term
+  # both.lm - lm object with both link and intercept
+  #
+  # Output: a data frame with these fields:
+  # dev - the development period description
+  # start - the initial loss amount
+  # actual - the actual ending loss amount
+  # link.only - the fitted final loss amounts using the link-only model
+  # both - fitted losses from model with intercept and link
+  # intercept.only - fitted losses from model with just intercept
+  starting.loss <- link.lm$model$start
+  predict.df <- data.frame(start=c(0, starting.loss))
+
+  df <- data.frame(dev=dev, start=c(0, starting.loss),
+                   actual=c(NA, link.lm$model$increment))
+  df$link.only <- predict(link.lm, predict.df)
+  df$intercept.only <- predict(intercept.lm, predict.df)
+  df$both <- predict(both.lm, predict.df)
+  return(df)
+}
+
+DevModelStats <- function(dev.model.list) {
+  # Return a list of statistics from a model list as produced by MakeDevModels
+  link.summary <- summary(dev.model.list$link.lm)
+  intercept.summary <- summary(dev.model.list$intercept.lm)
+  both.summary <- summary(dev.model.list$both.lm)
+  t.values <- both.summary$coefficients[, "t value"]
+  powers <- both.summary$coefficients[, "Pr(>|t|)"]
+  link.RS <- 1 - (link.summary$sigma / intercept.summary$sigma)^2
+  
+  return(list(dev.period=dev.model.list$dev, link.RS=link.RS,
+              both.RS=both.summary$r.squared,
+              link.t=t.values[2], intercept.t=t.values[1], 
+              link.power=powers[2], intercept.power=powers[1]))
+}
+
+FullTriangleDF <- function(half.tri, full.tri) {
+  # Return a full triangle data frame with 0's
+  #
+  # Args:
+  # half.tri - a half triangle in matrix form, with NAs where there are
+  #            unobserved elements
+  #
+  # full.tri - a fully developed triangle.  The "dev" column does not
+  #            have to match the half.tri.
+  #
+  # Output: A data frame with the columns origin, dev, value, and
+  # actual.  the dev column will be taken from half.tri.  actual will
+  # be TRUE or FALSE depending on whether the value was in the half
+  # triangle.  Additionally, the observed part will be offset
+  # backwards one period for plotting.
+  half.df <- as.data.frame(half.tri)
+  full.df <- as.data.frame(full.tri)
+  Assert("triangle" %in% class(half.tri) && "triangle" %in% class(full.tri),
+         "Must call FullTriangleDF with two triangle objects")
+  Assert(nrow(half.df) == nrow(full.df), 
+       "Error in triangle manipulation---number of rows don't match")
+  Assert(all(names(full.df) == c("origin", "dev", "value")))
+  
+  # Sort them both identically
+  half.df <- half.df[order(half.df$dev, half.df$origin), ]
+  full.df <- full.df[order(full.df$dev, full.df$origin), ]
+  full.df$dev <- half.df$dev # in case dev ages have been overwritten
+  full.df <- rbind(data.frame(origin=unique(full.df$origin), dev=0, value=0),
+                   full.df)
+
+  dev.periods <- unique(full.df$dev)
+  GetObserved <- function(origin, dev) {
+    # Return TRUE or FALSE depending on whether the next development
+    # period after dev has been observed
+    if (dev == max(dev.periods))
+      return(FALSE)
+    next.dev <- dev.periods[min(which(dev.periods > dev))]
+    Assert(length(next.dev) == 1 && next.dev > dev)
+    
+    next.value <- LookupDF(half.df, origin=origin, dev=next.dev)$value
+    return(!is.na(next.value))
+  }
+
+  # Now update with "observed" column
+  full.df$actual <- mapply(GetObserved, origin=full.df$origin, dev=full.df$dev)
+  return(full.df)
+}
+
+MackSummaryFDF <- function(mack.model, triangle.df, origin.field.heading) {
+  # Return an favir data frame summarizing the results of given mack model
+  mack.byorigin <- summary(mack.model)$ByOrigin
+  Assert(nrow(mack.byorigin) == nrow(triangle.df),
+         "Number of rows in Mack Output doesn't match")
+  new.col <- data.frame(origin=triangle.df$origin)
+  mack.fdf <- FavirDF(cbind(new.col, mack.byorigin))
+  FieldHeadings(mack.fdf) <- list(origin=origin.field.heading,
+                                  Latest="Latest Diagonal",
+                                  Dev.To.Date="Percent Developed",
+                                  Ultimate="Mack Ultimate",
+                                  IBNR="Bulk Reserve",
+                                  Mack.S.E="Mack Standard Error",
+                                  `CV(IBNR)`="CV of Bulk Reserves")
+  FieldGroup(mack.fdf, "money") <- c("Latest", "Ultimate", "IBNR",
+                                     "Mack.S.E")
+  FieldGroup(mack.fdf, "percent") <- "Dev.To.Date"
+  FieldGroup(mack.fdf, "origin") <- "origin"
+  mack.totals <- summary(mack.model)$Totals
+  SummaryRow(mack.fdf) <- list(origin="Total",
+                               Latest=mack.totals["Latest:", ],
+                               Ultimate=mack.totals["Ultimate:", ],
+                               IBNR=mack.totals["IBNR:", ],
+                               Mack.S.E=mack.totals["Mack S.E.:", ],
+                               `CV(IBNR)`=mack.totals["CV(IBNR):", ])
+  return(mack.fdf)
+}
+
+MackResidualPlots <- function(mack.model, triangle.long) {
+  # Make Mack model residual plots
+  #
+  # Args:
+  # mack.model - the MackChainLadder object
+  # triangle.long - a triangle in long data frame format.
+  #
+  # Output:
+  # a list of models with names "loss", "origin", "cal", and "dev"
+  resid <- residuals(mack.model)
+  resid$dev.in.units <- sort(unique(triangle.long$dev))[resid$dev.period]
+  loss.plot <- (qplot(x=fitted.value, y=standard.residuals, data=resid)
+      + geom_hline(aes(x=0), color=favir.colors["M2"])
+      + geom_smooth(aes(x=fitted.value, y=standard.residuals), se=FALSE)
+      + labs(x="Predicted Loss", y="Standardized Residual"))
+  origin.plot <- (ggplot(data=resid)
+      + geom_point(aes(x=origin.period, y=standard.residuals))
+      + geom_hline(aes(x=0), color=favir.colors["M2"])
+      + geom_smooth(aes(x=origin.period, y=standard.residuals), se=FALSE)
+      + labs(x=origin.field.heading, y="Standardized Residual")
+      + xlim(range(resid$origin.period)))
+  cal.plot <- (qplot(x=cal.period, y=standard.residuals, data=resid)
+      + geom_hline(aes(x=0), color=favir.colors["M2"])
+      + geom_smooth(aes(x=cal.period, y=standard.residuals), se=FALSE)
+      + labs(x="Calendar Year", y="Standardized Residual")
+      + xlim(range(resid$origin.period)))
+  dev.plot <- (qplot(x=dev.in.units, y=standard.residuals, data=resid)
+      + geom_hline(aes(x=0), color=favir.colors["M2"])
+      + geom_smooth(aes(x=dev.in.units, y=standard.residuals), se=FALSE)
+      + labs(x="Starting Development Age", y="Standardized Residual")
+      + scale_x_continuous(breaks=resid$dev.in.units))
+  return(list(loss=loss.plot, origin=origin.plot, cal=cal.plot, dev=dev.plot))
+}
+
+RegressionModels <- function(triangle.df, premium.df) {
+  # Return a list of lists of alternate age-to-age models
+  #
+  # Args:
+  # triangle.df - a triangle in long data-frame form
+  # premium.df - the premium by year
+  #
+  # Output:
+  # A list with length the number of age-to-age development links.
+  # Each element in the list corresponds to the output of MakeDevModels
+  # Make a triangle of loss ratios, to adjust for changing premium amounts
+  triangle.df$value <- (triangle.df$value /
+           LookupDFMult(premium.df, origin=triangle.df$origin)$premium)
+  loss.ratio.tri <- as.triangle(triangle.df)
+
+  mack.lr.model <- ChainLadder::MackChainLadder(loss.ratio.tri)
+  Assert(length(mack.lr.model$Models) == ncol(loss.ratio.tri) - 1,
+         "Expected one model for each triangle column, except last")
+  model.names <- paste(head(colnames(loss.ratio.tri), -1), "to",
+                       tail(colnames(loss.ratio.tri), -1))
+  alt.dev.models <- lapply(seq(along=mack.lr.model$Models),
+                           function(i) MakeDevModels(model.names[i],
+                                                     mack.lr.model$Models[[i]]))
+  names(alt.dev.models) <- model.names
+  return(alt.dev.models)
+}
+
+RegressionGraph <- function(alt.dev.models) {
+  # Return graph of regression results given list of models
+  #
+  # Args: list of models as produced by RegressionModels
+  #
+  # Output: Graph summarizing the regression
+  summary.regression.df <- do.call(rbind,
+               lapply(alt.dev.models,
+                      function(model.list) do.call(GetLinkDF, model.list)))
+  color_manual_values <- c(favir.colors["A5"], favir.colors["M3"],
+                           favir.colors["M4"])
+  names(color_manual_values) <- c("Link Only", "Intercept Only", "Both Terms")
+  reg.graph <- (ggplot(data=summary.regression.df) + facet_wrap(~ dev)
+                + geom_line(aes(x=start, y=link.only, colour="Link Only"))
+                + geom_line(aes(x=start, y=both, colour="Both Terms"))
+                + geom_line(aes(x=start, y=intercept.only,
+                                colour="Intercept Only"))
+                + scale_colour_manual("Model", color_manual_values)
+                + geom_point(aes(x=start, y=actual)))
+  ylim <- range(summary.regression.df$actual
+                [!is.na(summary.regression.df$actual)])
+  yrange <- ylim[2] - ylim[1]
+  reg.graph <- (reg.graph + labs(x="Starting Loss Ratio",
+                                 y="Increase in Loss Ratio")
+                + coord_cartesian(ylim=c(ylim[1] - 0.05 * yrange,
+                                         ylim[2] + 0.05 * yrange))
+                + scale_y_continuous(breaks=round(ggplot2::breaks(ylim,
+                                       "width", 4), 2)))
+  return(reg.graph)
+}
+
+RegressionStats <- function(alt.dev.models) {
+  # Return favir data frame of regression statistics
+  #
+  # Args: list of models as produced by RegressionModels
+  #
+  # Output: a favir data frame summarizing regression statistics
+  reg.stats.fdf <- TransposeDF(lapply(alt.dev.models, DevModelStats))
+  reg.stats.fdf <- FavirDF(reg.stats.fdf)
+  FieldHeadings(reg.stats.fdf) <- list(dev.period="Development Period",
+                                       link.RS="Link Only $R^2$ \\%",
+                                       both.RS="$R^2$ \\%",
+                                       intercept.t="Intercept $t$-Value",
+                                       link.t="Link $t$-Value",
+                                       intercept.power="Intercept $p$-val \\%",
+                                       link.power="Link Power $p$-val \\%")
+  FieldGroup(reg.stats.fdf, "both") <- 3:7
+  GroupHeading(reg.stats.fdf, "both") <- "Fit Results: Link and Intercept Model"
+  FieldGroup(reg.stats.fdf, "percent") <- c("link.RS", "both.RS",
+                                            "intercept.power", "link.power")
+  return(reg.stats.fdf)
+}
+
+
+
+###################################################
+### chunk number 2: LatexPrelude
+###################################################
+# Produce the latex introduction
+IncludePrelude("Basic Reserving Techniques", "Benedict Escoto")
+
+
+###################################################
+### chunk number 3: IncurredTriangle
+###################################################
+origin.field.heading <- "Accident Year"
+incurred.devel.tri.df <- FavirDF(incurred.devel.tri.df, orientation="sideways",
+                                 label="incurred tri",
+                                 caption="Incurred Loss Triangle")
+FieldGroup(incurred.devel.tri.df, "origin") <- "origin"
+FieldGroup(incurred.devel.tri.df, "money") <- 2:length(incurred.devel.tri.df)
+FieldHeadings(incurred.devel.tri.df) <- list(origin=origin.field.heading)
+GroupHeading(incurred.devel.tri.df,
+             "money") <- "Incurred Loss by Development Age"
+print(incurred.devel.tri.df)
+
+
+###################################################
+### chunk number 4: PaidTriangle
+###################################################
+paid.devel.tri.df <- FavirDF(paid.devel.tri.df,
+                             orientation="sideways", label="paid tri",
+                             caption="Paid Loss Triangle")
+FieldGroup(paid.devel.tri.df, "origin") <- "origin"
+FieldGroup(paid.devel.tri.df, "money") <- 2:length(paid.devel.tri.df)
+FieldHeadings(paid.devel.tri.df) <- list(origin=origin.field.heading)
+GroupHeading(paid.devel.tri.df, "money") <- "Paid Loss by Development Age"
+print(paid.devel.tri.df)
+
+
+###################################################
+### chunk number 5: ShowPremium
+###################################################
+premium.field.heading <- "Earned Premium"
+premium.fdf <- FavirDF(premium.df, label="premium",
+                       caption="Premium and A Priori Loss")
+FieldGroup(premium.fdf, "origin") <- "origin"
+FieldGroup(premium.fdf, "money") <- c("premium", "apriori.loss")
+FieldGroup(premium.fdf, "percent") <- "apriori.ratio"
+FieldHeadings(premium.fdf) <- list(origin=origin.field.heading,
+                                   premium=premium.field.heading,
+                                   apriori.loss="A Priori Loss",
+                                   apriori.ratio="A Priori Loss Ratio")
+SummaryRow(premium.fdf) <- list(origin="Avg",
+                                premium=mean(premium.fdf$premium),
+                                apriori.loss=mean(premium.fdf$apriori.loss),
+                                apriori.ratio=mean(premium.fdf$apriori.ratio))
+print(premium.fdf)
+
+
+###################################################
+### chunk number 6: CombinedIncTable
+###################################################
+LDF.paid.avg.df <- PrintCombinedTable(paid.devel.tri.df, paid.devel.df,
+                        textsize="tiny",
+                        label="Combined Paid LDF Table",
+                        caption="Traditional LDF Exhibit based on Paid Loss")
+
+
+###################################################
+### chunk number 7: SelectAgeToAgeLDFs
+###################################################
+LDF.paid.selected.age.to.age.df <- LDF.paid.avg.df[LDF.paid.avg.df$method ==
+                                                   "Weighted Avg", ]
+
+
+###################################################
+### chunk number 8: CombinedIncTable
+###################################################
+LDF.inc.avg.df <- PrintCombinedTable(incurred.devel.tri.df, incurred.devel.df,
+                      textsize="tiny",
+                      label="Combined Incurred LDF Table",
+                      caption="Traditional LDF Exhibit Based on Incurred Loss")
+
+
+###################################################
+### chunk number 9: SelectIncAgeToAgeLDFs
+###################################################
+LDF.inc.selected.age.to.age.df <- LDF.inc.avg.df[LDF.inc.avg.df$method ==
+                                                 "Weighted Avg", ]
+
+
+###################################################
+### chunk number 10: PaidLDFsToFit
+###################################################
+LDF.paid.tail.fitted.df <- Last(LDF.paid.selected.age.to.age.df, 4)
+print(MatrixToFDF(LDF.getAvgMatrix(LDF.paid.tail.fitted.df),
+                  label="Tail Paid Fit Factors",
+                  caption="Tail Factors to Fit: Paid Loss"))
+
+
+###################################################
+### chunk number 11: TailPaidMatrix
+###################################################
+tail.paid.results.fdf <- MatrixToFDF(Tail.Summary(LDF.paid.tail.fitted.df),
+                                rowname.col="Method",
+                                label="Tail Paid Results",
+                                caption="Results of Tail Fitting: Paid Loss")
+print(tail.paid.results.fdf)
+
+
+###################################################
+### chunk number 12: IncLDFsToFit
+###################################################
+LDF.inc.tail.fitted.df <- Last(LDF.inc.selected.age.to.age.df, 4)
+print(MatrixToFDF(LDF.getAvgMatrix(LDF.inc.tail.fitted.df),
+                  label="Tail Inc Fit Factors",
+                  caption="Tail Factors to Fit: Incurred Loss"))
+
+
+###################################################
+### chunk number 13: TailIncMatrix
+###################################################
+tail.inc.results.fdf <- MatrixToFDF(Tail.Summary(LDF.inc.tail.fitted.df),
+                             rowname.col="Method",
+                             label="Tail Inc Results",
+                             caption="Results of Tail Fitting: Incurred Loss")
+print(tail.inc.results.fdf)
+
+
+###################################################
+### chunk number 14: SelectedPaidLDFUlt
+###################################################
+TailPaidCumulative <- Tail.ModMcClenahan(LDF.paid.tail.fitted.df$end.dev,
+                                         cumprod(LDF.paid.tail.fitted.df$LDF))
+tail.paid.factor <- (TailPaidCumulative(1e6) /
+                     TailPaidCumulative(Last(LDF.paid.tail.fitted.df$end.dev)))
+LDF.paid.selected.ult <- LDF.AgeToUlt(LDF.paid.selected.age.to.age.df,
+                                      tail.paid.factor)
+print(LDF.AgeToUltFDF(LDF.paid.selected.ult, textsize="tiny",
+                      caption="Selected LDFs to Ultimate: Paid Loss",
+                      label="LDFs to Ultimate paid"))
+
+
+###################################################
+### chunk number 15: SelectedIncLDFUlt
+###################################################
+TailIncCumulative <- Tail.ModMcClenahan(LDF.inc.tail.fitted.df$end.dev,
+                                        cumprod(LDF.inc.tail.fitted.df$LDF))
+tail.inc.factor <- (TailIncCumulative(1e6) /
+                    TailIncCumulative(Last(LDF.inc.tail.fitted.df$end.dev)))
+LDF.inc.selected.ult <- LDF.AgeToUlt(LDF.inc.selected.age.to.age.df,
+                                     tail.inc.factor)
+print(LDF.AgeToUltFDF(LDF.paid.selected.ult, textsize="tiny",
+                      caption="Selected LDFs to Ultimate: Incurred Loss",
+                      label="LDFs to Ultimate inc"))
+
+
+###################################################
+### chunk number 16: ChainLadderPaid
+###################################################
+chainladder.paid.fdf <- ChainladderFDF(Latest(paid.devel.df),
+                                       LDF.paid.selected.ult)
+FieldHeadings(chainladder.paid.fdf)$origin <- origin.field.heading
+Caption(chainladder.paid.fdf) <- "Results of Chain Ladder Method on Paid Loss"
+Label(chainladder.paid.fdf) <- "chainladder paid"
+print(chainladder.paid.fdf)
+
+
+###################################################
+### chunk number 17: ChainLadderInc
+###################################################
+chainladder.inc.fdf <- ChainladderFDF(Latest(incurred.devel.df),
+                                      LDF.inc.selected.ult)
+FieldHeadings(chainladder.inc.fdf)$origin <- origin.field.heading
+Caption(chainladder.inc.fdf) <- "Results of Chain Ladder on Incurred Loss"
+Label(chainladder.inc.fdf) <- "chainladder inc"
+print(chainladder.inc.fdf)
+
+
+###################################################
+### chunk number 18: BornhuetterPaid
+###################################################
+bf.paid.fdf <- BornhuetterFDF(Latest(paid.devel.df), LDF.paid.selected.ult,
+                              premium.fdf)
+FieldHeadings(bf.paid.fdf)$origin <- origin.field.heading
+Caption(bf.paid.fdf) <- "Results of Bornhuetter-Ferguson Method on Paid Loss"
+Label(bf.paid.fdf) <- "bf paid"
+print(bf.paid.fdf)
+
+
+###################################################
+### chunk number 19: BornhuetterInc
+###################################################
+bf.inc.fdf <- BornhuetterFDF(Latest(incurred.devel.df), LDF.inc.selected.ult,
+                             premium.fdf)
+FieldHeadings(bf.inc.fdf)$origin <- origin.field.heading
+Caption(bf.inc.fdf) <- "Results of Bornhuetter-Ferguson Method on Incurred Loss"
+Label(bf.inc.fdf) <- "bf inc"
+print(bf.inc.fdf)
+
+
+###################################################
+### chunk number 20: CapeCodPaid1
+###################################################
+capecod.paid.fdf <- CapeCod(Latest(paid.devel.df), LDF.paid.selected.ult,
+                            premium.fdf)
+FieldHeadings(capecod.paid.fdf)$origin <- origin.field.heading
+Caption(capecod.paid.fdf) <- "Cape Cod Loss Ratio Selection: Paid Loss"
+Label(capecod.paid.fdf) <- "capecod paid 1"
+capecod.paid.selected.lr <- (sum(capecod.paid.fdf[["value"]]) /
+                             sum(capecod.paid.fdf[["used.premium"]]))
+SummaryRow(capecod.paid.fdf) <- list(origin="Total",
+                          value=sum(capecod.paid.fdf$value),
+                          premium=sum(capecod.paid.fdf$premium),
+                          used.premium=sum(capecod.paid.fdf$used.premium),
+                          exp.ratio=capecod.paid.selected.lr)
+print(capecod.paid.fdf)
+
+
+###################################################
+### chunk number 21: CapeCodPaid2
+###################################################
+capecod.paid.apriori <- data.frame(origin=premium.df$origin,
+                                   apriori.loss=(premium.df$premium *
+                                                 capecod.paid.selected.lr))
+capecod.paid.ult.fdf <- BornhuetterFDF(Latest(paid.devel.df),
+                                       LDF.paid.selected.ult,
+                                       capecod.paid.apriori)
+FieldHeadings(capecod.paid.ult.fdf)$origin <- origin.field.heading
+FieldHeadings(capecod.paid.ult.fdf)$ult <- "Cape Cod Ultimate"
+Caption(capecod.paid.ult.fdf) <- "Results of Cape Cod Method on Paid Loss"
+Label(capecod.paid.ult.fdf) <- "capecod paid 2"
+print(capecod.paid.ult.fdf)
+
+
+###################################################
+### chunk number 22: CapeCodInc1
+###################################################
+capecod.inc.fdf <- CapeCod(Latest(incurred.devel.df), LDF.inc.selected.ult,
+                            premium.fdf)
+FieldHeadings(capecod.inc.fdf)$origin <- origin.field.heading
+Caption(capecod.inc.fdf) <- "Cape Cod Loss Ratio Selection: Incurred Loss"
+Label(capecod.inc.fdf) <- "capecod inc 1"
+capecod.inc.selected.lr <- (sum(capecod.inc.fdf[["value"]]) /
+                             sum(capecod.inc.fdf[["used.premium"]]))
+SummaryRow(capecod.inc.fdf) <- list(origin="Total",
+                          value=sum(capecod.inc.fdf$value),
+                          premium=sum(capecod.inc.fdf$premium),
+                          used.premium=sum(capecod.inc.fdf$used.premium),
+                          exp.ratio=capecod.inc.selected.lr)
+print(capecod.inc.fdf)
+
+
+###################################################
+### chunk number 23: CapeCodInc2
+###################################################
+capecod.inc.apriori <- data.frame(origin=premium.df$origin,
+                                   apriori.loss=(premium.df$premium *
+                                                 capecod.inc.selected.lr))
+capecod.inc.ult.fdf <- BornhuetterFDF(Latest(incurred.devel.df),
+                                       LDF.inc.selected.ult,
+                                       capecod.inc.apriori)
+FieldHeadings(capecod.inc.ult.fdf)$origin <- origin.field.heading
+FieldHeadings(capecod.inc.ult.fdf)$ult <- "Cape Cod Ultimate"
+Caption(capecod.inc.ult.fdf) <- "Results of Cape Cod Method on Incurred Loss"
+Label(capecod.inc.ult.fdf) <- "capecod inc 2"
+print(capecod.inc.ult.fdf)
+
+
+###################################################
+### chunk number 24: MackPaidSummary
+###################################################
+mack.paid.model <- ChainLadder::MackChainLadder(
+                      paid.devel.tri, est.sigma="Mack", tail=tail.paid.factor)
+mack.paid.fdf <- MackSummaryFDF(mack.paid.model, incurred.devel.tri.df,
+                                origin.field.heading)
+Caption(mack.paid.fdf) <- paste("Mack Chain Ladder Results: Paid Loss")
+Label(mack.paid.fdf) <- "mack paid summary"
+print(mack.paid.fdf)
+
+
+###################################################
+### chunk number 25: MackPaidPlot
+###################################################
+mack.full.paid.tri <- mack.paid.model$FullTriangle
+if (Last(colnames(mack.full.paid.tri)) == "Inf")
+  mack.full.paid.tri <- as.triangle(mack.full.paid.tri[,
+                                      1:(ncol(mack.full.paid.tri) - 1)])
+mack.paid.plot.df <- FullTriangleDF(paid.devel.tri, mack.full.paid.tri)
+mack.paid.plot <- (ggplot(data=mack.paid.plot.df) +
+              geom_line(aes(x=dev, y=value, color=actual, group=origin)) +
+              scale_colour_manual("Status",
+                         values=as.vector(favir.colors[c("M5", "M2")]), 
+                         labels=c("Actual", "Projected")) +
+              labs(x="Development Age", y="Loss") +
+              scale_x_continuous(breaks=unique(mack.paid.plot.df$dev)))
+IncludeGraph(mack.paid.plot,
+             caption="Mack Actual and Predicted Development on Paid Loss",
+             label="mack paid plot", width=13, height=8)
+
+
+###################################################
+### chunk number 26: MackPaidResiduals
+###################################################
+mack.paid.resid.plots <- MackResidualPlots(mack.paid.model, paid.devel.df)
+IncludeGrid(list("1.1"=mack.paid.resid.plots$loss,
+                 "1.2"=mack.paid.resid.plots$origin,
+                 "2.1"=mack.paid.resid.plots$cal,
+                 "2.2"=mack.paid.resid.plots$dev),
+                 width=16.5, height=14, label="mack paid residuals",
+                 caption="Mack Model Residuals: Paid Loss")
+
+
+###################################################
+### chunk number 27: MackIncSummary
+###################################################
+mack.inc.model <- ChainLadder::MackChainLadder(
+                    incurred.devel.tri, est.sigma="Mack", tail=tail.inc.factor)
+mack.inc.fdf <- MackSummaryFDF(mack.inc.model, incurred.devel.tri.df,
+                               origin.field.heading)
+Caption(mack.inc.fdf) <- paste("Mack Chain Ladder Results: Incurred Loss")
+Label(mack.inc.fdf) <- "mack inc summary"
+print(mack.inc.fdf)
+
+
+###################################################
+### chunk number 28: MackIncPlot
+###################################################
+mack.full.inc.tri <- mack.inc.model$FullTriangle
+if (Last(colnames(mack.full.inc.tri)) == "Inf")
+  mack.full.inc.tri <- as.triangle(mack.full.inc.tri[,
+                                        1:(ncol(mack.full.inc.tri) - 1)])
+mack.inc.plot.df <- FullTriangleDF(incurred.devel.tri, mack.full.inc.tri)
+mack.inc.plot <- (ggplot(data=mack.inc.plot.df) +
+              geom_line(aes(x=dev, y=value, color=actual, group=origin)) +
+              scale_colour_manual("Status",
+                           values=as.vector(favir.colors[c("M5", "M2")]), 
+                           labels=c("Actual", "Projected")) +
+              labs(x="Development Age", y="Loss") +
+              scale_x_continuous(breaks=unique(mack.inc.plot.df$dev)))
+IncludeGraph(mack.inc.plot,
+             caption="Mack Actual and Predicted Development on Incurred Loss",
+             label="mack inc plot", width=13, height=8)
+
+
+###################################################
+### chunk number 29: MackIncResiduals
+###################################################
+mack.inc.resid.plots <- MackResidualPlots(mack.inc.model, incurred.devel.df)
+IncludeGrid(list("1.1"=mack.inc.resid.plots$loss,
+                 "1.2"=mack.inc.resid.plots$origin,
+                 "2.1"=mack.inc.resid.plots$cal,
+                 "2.2"=mack.inc.resid.plots$dev),
+                 width=16.5, height=14, label="mack inc residuals",
+                 caption="Mack Model Residuals: Incurred Loss")
+
+
+###################################################
+### chunk number 30: MunichResults
+###################################################
+munich.model <- ChainLadder::MunichChainLadder(paid.devel.tri,
+                               incurred.devel.tri,
+                               tailP=tail.paid.factor, tailI=tail.inc.factor)
+new.col <- data.frame(origin=incurred.devel.tri.df$origin)
+munich.fdf <- FavirDF(cbind(new.col, summary(munich.model)$ByOrigin),
+                      caption="Munich Chain Ladder Results",
+                      label="munich results")
+FieldGroup(munich.fdf, "origin") <- "origin"
+FieldGroup(munich.fdf, "money") <- c("Latest Paid", "Latest Incurred",
+                                     "Ult. Paid", "Ult. Incurred")
+FieldGroup(munich.fdf, "percent") <- c("Latest P/I Ratio", "Ult. P/I Ratio")
+FieldHeadings(munich.fdf) <- list(origin=origin.field.heading,
+                                  "Ult. Paid"="Ultimate Paid",
+                                  "Ult. Incurred"="Ultimate Incurred",
+                                  "Latest P/I Ratio"="Latest P/I (\\%)",
+                                  "Ult. P/I Ratio"="Ultimate P/I (\\%)")
+munich.totals <- summary(munich.model)$Totals
+SummaryRow(munich.fdf) <- list(origin="Totals",
+             "Latest Paid"=munich.totals["Latest:", "Paid"],
+             "Latest Incurred"=munich.totals["Latest:", "Incurred"],
+             "Latest P/I Ratio"=munich.totals["Latest:", "P/I Ratio"],
+             "Ult. Paid"=munich.totals["Ultimate:", "Paid"],
+             "Ult. Incurred"=munich.totals["Ultimate:", "Incurred"],
+             "Ult. P/I Ratio"=munich.totals["Ultimate:", "P/I Ratio"])
+print(munich.fdf)
+
+
+###################################################
+### chunk number 31: MunichStdResiduals
+###################################################
+
+munich.resid.df <- data.frame(paid=munich.model$PaidResiduals,
+                              inc=munich.model$IncurredResiduals,
+                              qinv=munich.model$QinverseResiduals,
+                              q=munich.model$QResiduals)
+munich.resid.df <- RemoveNARows(munich.resid.df)
+munich.paid.plot <- (ggplot(data=munich.resid.df)
+                     + geom_hline(aes(x=0), color=favir.colors["M2"])
+                     + geom_vline(aes(x=0), color=favir.colors["M2"]))
+munich.inc.plot <- (munich.paid.plot + geom_point(aes(x=q, y=inc))
+                    + geom_abline(intercept=0, slope=coef(munich.model$lambdaI))
+                    + labs(x="Paid/Incurred Residuals",
+                           y="Incurred Loss Residuals"))
+munich.paid.plot <- (munich.paid.plot + geom_point(aes(x=qinv, y=paid))
+                     + geom_abline(intercept=0,
+                                   slope=coef(munich.model$lambdaP))
+                     + labs(x="Incurred/Paid Residuals",
+                            y="Paid Loss Residuals"))
+IncludeGrid(list("1.1"=munich.paid.plot, "1.2"=munich.inc.plot),
+            width=16.5, height=8,
+            caption="Munich Chain Ladder Standardized Residuals",
+            label="munich residuals")
+
+
+###################################################
+### chunk number 32: RegressionPaidGraphs
+###################################################
+dev.models.paid <- RegressionModels(paid.devel.df, premium.df)
+regression.paid.graph <- RegressionGraph(dev.models.paid)
+IncludeGraph(regression.paid.graph, width=16.5, height=14,
+             caption="Regression by Development Period: Paid Loss",
+             label="regression paid graph")
+
+
+###################################################
+### chunk number 33: RegressionPaidStats
+###################################################
+reg.paid.stats.fdf <- RegressionStats(dev.models.paid)
+Caption(reg.paid.stats.fdf) <- "Regression Statistics: Paid Loss"
+Label(reg.paid.stats.fdf) <- "regression paid stats"
+print(reg.paid.stats.fdf)
+
+
+###################################################
+### chunk number 34: RegressionIncGraphs
+###################################################
+dev.models.inc <- RegressionModels(incurred.devel.df, premium.df)
+regression.inc.graph <- RegressionGraph(dev.models.inc)
+IncludeGraph(regression.inc.graph, width=16.5, height=14,
+             caption="Regression by Development Period: Incurred Loss",
+             label="regression inc graph")
+
+
+###################################################
+### chunk number 35: RegressionIncStats
+###################################################
+reg.inc.stats.fdf <- RegressionStats(dev.models.inc)
+Caption(reg.inc.stats.fdf) <- "Regression Statistics: Incurred Loss"
+Label(reg.inc.stats.fdf) <- "regression inc stats"
+print(reg.inc.stats.fdf)
+
+
+###################################################
+### chunk number 36: SummaryTable
+###################################################
+# Build a data frame that has all ultimates by origin and method
+summary.df <- rbind(data.frame(method="Paid: Chain Ladder",
+                               origin=chainladder.paid.fdf$origin,
+                               ult=chainladder.paid.fdf$ult),
+                    data.frame(method="Incurred: Chain Ladder",
+                               origin=chainladder.inc.fdf$origin,
+                               ult=chainladder.inc.fdf$ult),
+                    data.frame(method="Paid: Bornhuetter-Ferguson",
+                               origin=bf.paid.fdf$origin,
+                               ult=bf.paid.fdf$ult),
+                    data.frame(method="Incurred: Bornhuetter-Ferguson",
+                               origin=bf.inc.fdf$origin,
+                               ult=bf.inc.fdf$ult),
+                    data.frame(method="Paid: Cape-Cod",
+                               origin=capecod.paid.ult.fdf$origin,
+                               ult=capecod.paid.ult.fdf$ult),
+                    data.frame(method="Incurred: Cape-Cod",
+                               origin=capecod.inc.ult.fdf$origin,
+                               ult=capecod.inc.ult.fdf$ult),
+                    data.frame(method="Paid: Mack Chain Ladder",
+                               origin=mack.paid.fdf$origin,
+                               ult=mack.paid.fdf$Ultimate),
+                    data.frame(method="Incurred: Mack Chain Ladder",
+                               origin=mack.inc.fdf$origin,
+                               ult=mack.inc.fdf$Ultimate),
+                    data.frame(method="Paid: Munich Chain Ladder",
+                               origin=munich.fdf$origin,
+                               ult=munich.fdf[["Ult. Paid"]]),
+                    data.frame(method="Incurred: Munich Chain Ladder",
+                               origin=munich.fdf$origin,
+                               ult=munich.fdf[["Ult. Incurred"]]))
+totals.rows <- plyr::ddply(summary.df, .(method),
+                           function(df) data.frame(method=df$method[[1]],
+                                                   origin="Total",
+                                                   ult=sum(df$ult)))
+summary.df <- rbind(summary.df, totals.rows)
+summary.fdf.list <- MakeSummaryFDFs(summary.df, origin.field.heading)
+for (fdf in summary.fdf.list)
+  print(fdf)
+
+
+###################################################
+### chunk number 37: SummaryPlot
+###################################################
+summary.plot.df <- summary.df[summary.df$origin != "Total", ]
+average.rows <- plyr::ddply(summary.plot.df, .(method),
+                            function(df) data.frame(method=df$method[[1]],
+                                                    origin="Average",
+                                                    ult=mean(df$ult)))
+summary.plot.df <- rbind(summary.plot.df, average.rows)
+summary.plot <- (ggplot(aes(x=method, y=ult), data=summary.plot.df)
+                 + geom_bar(stat="identity")
+                 + coord_flip()
+                 + facet_wrap(~ origin, ncol=5)
+                 + labs(x="Development Method", y="Ultimate Loss"))
+IncludeGraph(summary.plot, caption="Multi-Method Development Summary Plot",
+             label="summary plot", height=20, width=16.5)
+
+

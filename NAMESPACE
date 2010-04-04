@@ -1,0 +1,9 @@
+import(ggplot2, plyr, reshape, tools)
+
+exportPattern("^[^\\.k]")
+
+S3method(print, "favir.prelatex")
+S3method(print, "favir.data.frame")
+S3method(`$`, "favir.environment")
+S3method(with, "favir.environment")
+

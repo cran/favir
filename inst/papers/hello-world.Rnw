@@ -1,0 +1,12 @@
+<<SourceR,results=hide,echo=FALSE>>=
+library(favir)
+InitPaper()
+@ 
+
+<<LatexPrelude,echo=FALSE,results=tex>>=
+IncludePrelude("Hello World Title", "Random Actuary")
+@ 
+
+Hello, world!
+
+\end{document}
