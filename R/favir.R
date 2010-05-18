@@ -274,6 +274,21 @@ MakeFormatter <- function(digits=0, format="f", big.mark=",",
 }
 
 # Declare some common formatters
+.MakePercentFormatter <- function(digits) {
+  # Return a formatting function that turns numbers into percents with
+  # specified number of digits.  For example, 0.032 -> "3.2"
+  Result <- function(x) {
+    # This is the formatting function
+    if (mode(x) != "numeric")
+      return(paste("$", x, "$", sep=""))
+    return(ifelse(is.null(x) | is.na(x),
+                  "",
+                  paste("$", formatC(x * 100, digits=digits, format="f"), "$",
+                        sep="")))
+  }
+  return(Result)
+}
+
 formatters <- list(comma=MakeFormatter(digits=0, big.mark=","),
                    comma0=MakeFormatter(digits=0, big.mark=","),
                    comma1=MakeFormatter(digits=1, big.mark=","),
@@ -289,12 +304,12 @@ formatters <- list(comma=MakeFormatter(digits=0, big.mark=","),
                    space1=MakeFormatter(digits=1, big.mark=" "),
                    space2=MakeFormatter(digits=2, big.mark=" "),
                    space3=MakeFormatter(digits=3, big.mark=" "),
-               percent=function(x) MakeFormatter(digits=1, big.mark="")(x*100),
-               percent0=function(x) MakeFormatter(digits=0, big.mark="")(x*100),
-               percent1=function(x) MakeFormatter(digits=1, big.mark="")(x*100),
-               percent2=function(x) MakeFormatter(digits=2, big.mark="")(x*100),
-               percent3=function(x) MakeFormatter(digits=3, big.mark="")(x*100))
-                   
+                   percent=.MakePercentFormatter(1),
+                   percent0=.MakePercentFormatter(1),
+                   percent1=.MakePercentFormatter(1),
+                   percent2=.MakePercentFormatter(2),
+                   percent3=.MakePercentFormatter(3))
+
 kGlobals <- list( # This holds global formatting options
   default.formatter=MakeFormatter(), # Default global formatter
   # The list below maps field group names to formatting functions
@@ -642,7 +657,7 @@ TextSize <- function(fdf) {
   return(result)
 }
 
-kTablePrefix1 <- "\\begin{figure}[hbp]"
+kTablePrefix1 <- "\\begin{figure}[htp]"
 kTablePrefix2 <- "
 \\begin{center}
 \\begin{tikzpicture}
@@ -1094,10 +1109,11 @@ kPrelude2 <- ("%%%%%%%%%%%%%%% End Colors, Start Logo
 \\begin{document}
 \\thispagestyle{plain}")
 
-IncludePrelude <- function(title, author, subtitle="") {
+IncludePrelude <- function(title, author, subtitle="", header.lines="") {
   # Insert the latex prelude into the document
   cat(kPrelude1)
   cat(.MakeColorLines(favir.colors))
+  cat(header.lines)
   cat(kPrelude2)
 
   AssertSingle(title, author, subtitle)

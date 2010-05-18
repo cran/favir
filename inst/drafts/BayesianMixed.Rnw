@@ -1,0 +1,491 @@
+<<SourceR,results=hide,echo=FALSE>>=
+library(favir)
+InitPaper()
+@ 
+
+<<LatexPrelude,echo=FALSE,results=tex>>=
+IncludePrelude("Bayesian Claim Severity with Mixed Distributions",
+               "Benedict Escoto",
+               header.lines="\\usepackage{amsmath}")
+@ 
+
+\begin{abstract}
+\noindent
+  Suppose the default claim severity distribution is a finite mixture
+  of simpler severity distributions.  For instance, many ISO
+  distributions are mixed exponentials.  The technique in this paper
+  can be used to adjust the weights of the mixture in a principled way
+  to partially-credible observed claim severities.
+  
+  In Bayesian terminology, this paper assumes a Dirichlet distribution
+  over initial mixture weights.  The posterior distribution,
+  conditional on one or more observed claim severities, is computed
+  using either a custom Gibbs sampler or the \texttt{runjags} package.
+\end{abstract}
+
+\section{Introduction}
+
+Many applications require the position of modeling claim severities
+based on limited historical data.  One example is the pricing an
+excess of loss reinsurance layer.
+
+The technique in this paper is intended to help cover the awkward
+middle ground between having no data and having lots of data.  If no
+claim data is available, some default claim severity distribution may
+be available.  For instance, ISO publishes mixed exponential severity
+distributions based on aggergate data (see Palmer for a basic
+description of ISO's methodology).  When many data points are
+available, maximum-likelihood curve fitting methods like ISO's method
+work well.
+
+Intuitively, it seems the expected claim severity distribution should
+morph from the default distribution into some fitted distribution as
+more and more claims are observed.  The most principled way of doing
+this is to use Bayesian statistics.
+
+This paper models this situation under these assumptions:
+
+\begin{enumerate}
+  \item The default severity distribution is a mixed exponential (such
+    as those supplied by ISO).  Other mixed distributions would
+    probably work with minor modifications.
+    
+  \item Parameter uncertainty is modeled using a Dirichlet
+    distribution over the mixture weights.  This requires one
+    additional parameter, interpreted as the confidence in the default
+    distribution.
+    
+  \item The posterior distribution is computing using standard
+    Bayesian updating on observed claim severities.
+\end{enumerate}
+
+The numerical results of this technique can be computed quickly using
+Gibbs sampling, a Monte Carlo Markov Chain (MCMC) method.  The output
+can be summarized as a new set of mixture weights for use however the
+actuary would use the original default distribution.
+
+\section{Required input data}
+
+Three initial inputs are required.  The weights and means of the
+default severity distribution are shown in figure \ref{defaultDist}.
+
+<<defaultDist,results=tex,echo=FALSE>>=
+prior.weights <- c(0.1, 0.2, 0.3, 0.2, 0.1, 0.05, 0.035, 0.01, 0.005)
+means <- c(0.3, 1, 3, 10, 30, 100, 300, 1000, 3000) * 1000
+default.df <- data.frame(weight=prior.weights, mean=means)
+Assert(sum(default.df$weight) == 1, err.msg="Weights don't add to 1!")
+default.fdf <- FavirDF(default.df, caption="Default Mixed Exponential",
+                       label="defaultDist")
+FieldFormatters(default.fdf) <- list(weight=formatters$percent1)
+FieldHeadings(default.fdf) <- list(weight="Weights (\\%)", mean="Means")
+SummaryRow(default.fdf) <- list(weight="Avg",
+                                mean=sum(default.df$mean * default.df$weight))
+print(default.fdf)
+@ 
+
+Second, we need to know how confident the actuary is in these initial
+weights.  Does the actuary think that the ``true'' distribution is
+almost certainly close to the default distribution?  Or is it probable
+that the true distribution is much bigger or smaller than the default?
+Specifying this is equivalent to specifying the variance of the
+hypothetical means in Buhlmann credibility.
+
+<<setSigma,results=hide,echo=FALSE>>=
+sigma <- 50000
+
+GetAlpha0 <- function(sigma, prior.weights, means) {
+  # Return the dirichlet parameter alpha 0
+  Assert(length(prior.weights) == length(means), "mismatched lengths")
+  AssertSingle(sigma)
+  
+  s <- sum(means^2 * prior.weights * (1 - prior.weights))
+  for (j in seq(along=means))
+    for (k in seq(along=means))
+      if (j != k)
+        s <- s + means[j] * means[k] * prior.weights[j] * prior.weights[k]
+  return(s / sigma^2 - 1)
+}
+alpha0 <- GetAlpha0(sigma, prior.weights, means)
+alpha <- prior.weights / sum(prior.weights) * alpha0
+@ 
+
+\begin{quote}
+  The value used for the standard deviation of the expectation is
+  \textbf{\textcolor{colorM5}{\Sexpr{sigma}}}.
+\end{quote}
+
+Finally, we need to know the claims to update the distribution on.
+These are shown in figure \ref{claims}.
+
+<<claims,results=tex,echo=FALSE>>=
+claims <- c(500, 32.5, 8.2, 10, 750) * 1000
+claim.fdf <- FavirDF(data.frame(claim=claims), label="claims",
+                     caption="Claim Severities")
+FieldHeadings(claim.fdf) <- list(claim="Amount")
+print(claim.fdf)
+@ 
+
+\section{The answer}
+
+Given the numerical data in the previous section and the modeling
+assumptions described in the introduction, we can compute the
+posterior weights.
+
+<<computeAnswer,results=tex,echo=FALSE>>=
+rdirichlet <- function(alpha) {
+  # Simulate one result from a dirichlet distribution with parameters alpha
+  dim <- length(alpha)
+  y <- rep(NA, dim)
+  for (i in seq(length=dim))
+    y[i] <- rgamma(1, alpha[i])
+  return(y/sum(y))
+}
+
+GibbsSample <- function(k, means, alpha, claims) {
+  # Apply Gibbs sampling algorithm to observed claims
+  # Arguments:
+  #   k - number of iterations
+  #   alpha - dirichlet parameters
+  #   means - means of the exponential distributions
+  #   claims - vector of observed claim severities
+  # Return value: a data frame with two columns
+  #   weight - the expected posterior weights
+  #   error - approximate standard deviation of each estimate
+  discard <- 10 # number of initial draws to discard
+  Assert(length(alpha) == length(means),
+         "Inconsistent number of terms in mixture")
+  Assert(k > 0, "Number of iterations k must be a positive integer")
+  # each row in the weight matrix holds one sample of the weights
+  weight.matrix <- matrix(NA, nrow=k + discard, ncol=length(means))
+
+  weight.matrix[1, ] <- alpha / sum(alpha)
+  for (i in 2:(k + discard)) {
+    buckets <- SampleBuckets(means, weight.matrix[i - 1, ], claims)
+    weight.matrix[i, ] <- rdirichlet(alpha + buckets)
+  }
+  weight.matrix <- weight.matrix[(discard + 1):k, ]
+  return(data.frame(weight=apply(weight.matrix, 2, mean),
+                    error=apply(weight.matrix, 2, sd) / sqrt(k)))
+}
+
+SampleBuckets <- function(means, weights, claims) {
+  # Sample from categorial distribution conditional on claims
+  # Arguments:
+  #   means - vector of m means of the exponential distributions
+  #   claims - vector of observed claim severities
+  #   weights - vector of m probabilities; weights prior to claims
+  # Return value: vector of length n sampled from p(buckets|weights, claims)
+  m <- length(means)
+  result <- rep(0, m)
+  buckets <- seq(along=means)
+  for (claim in claims) {
+    likelihoods <- exp(-claim / means) / means
+    weighted.probs <- likelihoods * weights
+    s <- sample(buckets, size=1, prob=weighted.probs)
+    result[s] <- result[s] + 1
+  }
+  return(result)
+}
+
+answer <- GibbsSample(2000, means, alpha, claims)
+
+answer.fdf <- FavirDF(data.frame(prior.weight=prior.weights,
+                                 mean=means,
+                                 post.weight=answer$weight,
+                                 post.stddev=2 * answer$error, # be conservative
+                                 mean2=means),
+                      caption="Results of Bayesian Updating",
+                      label="answer")
+FieldFormatters(answer.fdf) <- list(prior.weight=formatters$percent1,
+                                    post.weight=formatters$percent1,
+                                    post.stddev=formatters$percent2)
+FieldHeadings(answer.fdf) <- list(prior.weight="Weight (\\%)",
+                                  mean="Mean",
+                                  post.weight="Weight (\\%)",
+                                  post.stddev="Error (\\%)",
+                                  mean2="Mean")
+FieldGroup(answer.fdf, "priors") <- c("prior.weight", "mean")
+GroupHeading(answer.fdf, "priors") <- "Prior to Data"
+FieldGroup(answer.fdf, "posterior") <- c("post.weight", "post.stddev", "mean2")
+GroupHeading(answer.fdf, "posterior") <- "Posterior to Data"
+SummaryRow(answer.fdf) <- list(prior.weight="Avg",
+                               mean=sum(answer.fdf$prior.weight * means),
+                               post.stddev="Avg",
+                               mean2=sum(answer.fdf$post.weight * means))
+print(answer.fdf)
+@
+
+\noindent Due to computational difficulties (see section
+\ref{computing}), the posterior weights are only approximated.  Figure
+\ref{answer} shows the new weights and estimates the approximation
+error.  The means remain the same as required by the model.  Figure
+\ref{answer graph} shows the difference graphically.  This graph shows
+both the change in weights and the change in densities.  The observed
+claims are shown using vertical lines.
+
+<<graphAnswer,results=tex,echo=FALSE>>=
+Densities <- function(means, weights, xs) {
+  # Return probability density function for mixed exponential
+  return(sapply(xs, function(x) sum(weights * dexp(x, 1/means))))
+}
+
+loss.points <- exp(seq(from=log(min(means / 3)), to=log(max(means * 3)),
+                       length=100))
+prior.densities <- log(Densities(means, prior.weights, loss.points), base=10)
+posterior.densities <- log(Densities(means, answer$weight, loss.points), base=10)
+
+weights.graph.df <- rbind(data.frame(x=means, y=prior.weights, dist="Prior"),
+                          data.frame(x=means, y=answer$weight, dist="Posterior"))
+weights.graph.df$section <- "Weights"
+weights.graph.df$bar.alpha <- 1 # this is a hack to avoid plotting some geoms
+weights.graph.df$line.alpha <- 0 # alpha = 0 means not plotted
+                          
+density.graph.df <- rbind(data.frame(x=loss.points, y=prior.densities,
+                                     dist="Prior"),
+                          data.frame(x=loss.points, y=posterior.densities,
+                                     dist="Posterior"))
+density.graph.df$section <- "Density"
+density.graph.df$bar.alpha <- 0
+density.graph.df$line.alpha <- 1
+
+# This graph is complicated and took some trial and error, but hopefully it
+# shows a lot of information
+color.scale <- favir.colors[c("M3", "M4")]
+names(color.scale) <- c("Prior", "Posterior")
+answer.graph <- (ggplot()
+                 + geom_vline(aes(xintercept=c(claims, claims),
+                                  section=c(rep("Density", length(claims)),
+                                            rep("Weights", length(claims)))),
+                              color=favir.colors["A3"], size=0.25,
+                              position="dodge")
+                 + geom_bar(aes(x=weights.graph.df$x,
+                                y=weights.graph.df$y,
+                                color=weights.graph.df$dist,
+                                fill=weights.graph.df$dist,
+                                section="Weights"),
+                            stat="identity", position="dodge")
+                 + scale_colour_manual(name="Distribution", values=color.scale)
+                 + scale_fill_manual(name="Distribution", values=color.scale)
+                 + scale_x_log10()
+                 + labs(x="Loss Severity", y="Weights and Log(Density)")
+                 + geom_line(aes(x=density.graph.df$x,
+                                 y=density.graph.df$y,
+                                 group=density.graph.df$dist,
+                                 color=density.graph.df$dist,
+                                 section="Density"),
+                             size=0.7)
+                 + facet_grid(section ~ ., scale="free"))
+answer.graph$legend.position <- "bottom"
+IncludeGraph(answer.graph, height=8, width=18,
+             caption="Graph of Results", label="answer graph")
+@
+
+\section{Detailed model}
+
+Formally, the Bayesian probabilistic model used is defined by these
+equations:
+
+\begin{align}
+p(x|b) & = \frac{e^{x/\mu_b}}{\mu_b} \label{modelstart}\\
+p(b|w_1, \ldots, w_m) & = w_b\\
+p(w_1, \ldots, w_m) & =
+   \frac{\Gamma(\sum_{j=1}^m \alpha_j)}{\prod_{j=1}^m \Gamma(\alpha_j)} \prod_{j=1}^m w_j^{\alpha_j - 1} \mbox{ with } w_m = 1 - \sum_{j=1}^{m-1} w_j
+  \label{modelend}
+\end{align}
+
+\noindent
+or in other words,
+
+\begin{align*}
+x|b & \sim \mbox{Exponential}(1 / \mu_b)\\
+b|w_1, \ldots, w_m & \sim \mbox{Categorical}(w_1, \ldots, w_m) \\
+w_1, \ldots, w_m & \sim \mbox{Dirichlet}(\alpha_1, \ldots, \alpha_m) \\
+\end{align*}
+
+\noindent
+where $x$ is an individual claim severity and $\mu_b$ is the expected
+value of exponential distribution $b$.  $x$ and bucket selection $b$
+are assumed independent given the bucket weights $(w_1, \ldots, w_m)$.
+$\alpha_1, \ldots, \alpha_m$ are hyperparameters---they control the
+initial prior distribution over the possible bucket weights, but are
+not given probabilities themselves.
+
+The model's marginal distribution over claim severities is then
+
+\begin{align}
+  p(x) & = \sum_{b=1}^m \int p(x|b)p(b|\mathbf{w}) p(\mathbf{w})\,d\mathbf{w}
+              \notag\\
+  & = \sum_{b=1}^m \int p(x|b) w_b p(\mathbf{w}) \,d\mathbf{w} \notag\\
+  & = \sum_{b=1}^m (\int w_b p(\mathbf{w}) \,d\mathbf{w})p(x|b) \notag\\
+  & = \sum_{b=1}^m \mbox{E}[w_b] p(x|b) \label{marginal}
+\end{align}
+
+\noindent
+where $\mathbf{w} = w_1, \ldots, w_m$.  Thus as long as we choose
+$\alpha_1, \ldots, \alpha_m$ so that $\mbox{E}[w_j] = a_j$ where $a_j$
+is our default weight for bucket $j$, our model will imply the correct
+marginal claim severity distribution before any data is observed.
+
+\subsection{The Dirichlet and choosing \boldmath{$\alpha$}}
+
+The Dirichlet is the multidimensional analogue of the beta
+distribution.  Just as the beta distribution can be used to express
+uncertainty about two numbers which must add to 1, the Dirichlet can
+express uncertainty about $m$ positive numbers that must add to 1.
+This property makes it popular in Bayesian analysis (see Mildenhall
+for an example).
+
+It is a property of the Dirichlet distribution that if $w_1, \ldots,
+w_m \sim \mbox{Dirichlet}(\alpha_1, \ldots, \alpha_m)$, then
+
+\begin{eqnarray}
+  \mathrm{E}[w_j] & = & \frac{\alpha_j}{\alpha_0} \\
+  \mathrm{Var}[w_j] & = & \frac{\alpha_j (\alpha_0-\alpha_j)}{\alpha_0^2 (\alpha_0+1)} = \frac{\mathrm{E}[w_j] (1-\mathrm{E}[w_j])}{(\alpha_0+1)} \label{vareq} \\
+  \mathrm{Cov}[w_j, w_k] & = & \frac{- \alpha_j \alpha_k}{\alpha_0^2 (\alpha_0+1)} = \frac{- \mathrm{E}[w_j] \mathrm{E}[w_k]}{\alpha_0 + 1} \mbox{ for } j \not= k
+  \label{coveq}
+\end{eqnarray}
+
+\noindent
+where $\alpha_0 = \sum_{j=1}^m \alpha_j$.  Because we are given the
+initial default weights $a_j = \mathrm{E}[w_j]$, the choice of
+$\alpha_0$ will uniquely determine $\alpha_1, \ldots, \alpha_m$.  As
+in the beta distribution, the larger the sum of the parameters
+$\alpha_0$, the more certain we are of the ``true'' weights.
+
+Almost any statement about parameter risk, or about the uncertainty of
+the true distribution, will determine a value for $\alpha_0$.
+Furthermore, with a Dirichlet distribution many of these will be
+analytically tractical.  In this paper, we assume that the uncertainty
+(measured in terms of standard deviation) of the true (unlimited)
+expected claim severity is given as $\sigma$.  Using equations
+(\ref{vareq}) and (\ref{coveq}) we get
+
+\begin{eqnarray*}
+  \sigma^2 & = & \mathrm{Var}[\mathrm{E}[x|w_1, \ldots, w_m]] \\
+  & = & \mathrm{Var}[\sum_{j=1}^m w_j \mu_j ]\\
+  & = & \sum_{j=1}^m \mu_j^2 \mathrm{Var}[w_j] +
+           \sum_{j \not= k} \mu_j\mu_k \mathrm{Cov}[w_j, w_k] \\
+  & = & \sum_{j=1}^m \mu_j^2 \frac{\mathrm{E}[w_j] (1-\mathrm{E}[w_j])}{\alpha_0+1}
+           + \sum_{j\not=k} \mu_j\mu_k \frac{- \mathrm{E}[w_j] \mathrm{E}[w_k]}{\alpha_0 + 1} \\
+  & = & \sum_{j=1}^m \mu_j^2 \frac{a_j (1-a_j)}{\alpha_0+1}
+           + \sum_{j\not=k} \mu_j\mu_k \frac{- a_j a_k}{\alpha_0 + 1} \\
+\end{eqnarray*}
+
+\noindent
+hence
+
+\begin{eqnarray}
+\alpha_0 & = & \frac{1}{\sigma^2} (\sum_{j=1}^m \mu_j^2 a_j (1-a_j)
+           - \sum_{j\not=k} \mu_j\mu_k a_j a_k) - 1 \label{alpha0}.
+\end{eqnarray}
+
+Equation (\ref{alpha0}) was used above to determine the initial
+Dirichlet paramaters.  Specifically, the chosen value for $\sigma$,
+\textcolor{colorM5}{\Sexpr{sigma}}, implies that $\alpha_0 =$
+\textcolor{colorM5}{\Sexpr{alpha0}}.
+
+The behavior of the Dirichlet/multinomial conjugate pair under
+Bayesian updating suggests this interpretation of $\alpha_0$: our
+prior distribution contains an amount of information equivalent to
+$\alpha_0$ claims (see Hoff p.39).  For instance, if $\alpha_0 = 5$,
+then prior to the data, we have about as much information as someone
+would have after seeing 5 claims.  Although this idea is logically
+nonsensical, it does provide a rough-and-ready guide to the influence
+the data will have on the posterior weights.  For instance, if
+$\alpha_0 = 5$, then after conditionalization on 5 claims, the data
+and our prior beliefs will have about equal credibility.
+
+\subsection{Why not vary the means?}
+
+It may seem more practical to allow the means of the exponential
+distributions to vary with observed claims.  The reason this paper
+only adjusts the weights is that this allows the correct default
+distribution to be used when there are no claims.  Equation
+(\ref{marginal}) shows that the prior marginal distribution will
+correctly equal the default distribution as long as the expected
+weights are equal to the desired default weights.  However, there is
+no similar way to do this by varying the means.
+
+For example, suppose desired claim severity is an equally-weighted
+mixed exponetial of means 100 and 300:
+
+\[ p(x) = 0.5 \frac{e^{x / 100}}{100} + 0.5 \frac{e^{x / 300}}{300}. \]
+
+\noindent
+Then $p(x)$ can be expressed as the weighted mixture of various other
+mixtures of exponentials with means 100 and 300, such as:
+
+\[ p(x) = \frac{1}{2}(0.25 \frac{e^{x / 100}}{100} + 0.75 \frac{e^{x / 300}}{300})
++ \frac{1}{2}(0.75 \frac{e^{x / 100}}{100} + 0.25 \frac{e^{x / 300}}{300}) \]
+
+However, it is impossible to express $p(x)$ as a (positive) mixture of
+exponentials with means other than 100 or 300.  Thus if we know that
+the true distribution is a mixed exponential, and if we know the form
+of $p(x)$ as is above, then our modeled uncertainty must only concern
+the weights of the mixed exponential.
+
+
+\section{Computing the answer}
+\label{computing}
+
+Given the model described in equations
+(\ref{modelstart})--(\ref{modelend}) and $n$ observed claim severities
+$c_1, \ldots, c_n$, it is simple in principle to compute the posterior
+marginal distribution:
+
+\begin{eqnarray}
+p(x|c_1, \ldots, c_n) & = & \sum_{b=1}^m \int p(x|b, c_1, \ldots, c_n)
+    p(b|\mathbf{w}, c_1, \ldots, c_n) p(\mathbf{w}|c_1, \ldots, c_n)\,d\mathbf{w}\\
+& = & \sum_{b=1}^m \int p(x|b) p(b|\mathbf{w})
+    p(\mathbf{w}|c_1, \ldots, c_n)\,d\mathbf{w} \label{integral}\\
+& = & \sum_{b=1}^m \mathrm{E}[w_b|c_1, \ldots, c_m]p(x|b).
+\end{eqnarray}
+
+\noindent
+However, straightforwardly computing (\ref{integral}) is difficult,
+even when a simple distribution like the exponential is used.
+Interestingly, (\ref{integral}) is analytically soluble, but the
+number of terms is $O(m^n)$ so this tact is infeasible.
+
+Instead, the posterior marginal weights $\mathrm{E}[w_b|c_1, \ldots,
+  c_m]$ can be computed quickly using Gibbs sampling.  The logic
+behind this procedure is relatively complicated and won't be described
+here (see Hoff, chapter 6) but the implementation is only about a
+dozen lines of code.
+
+An MCMC technique like Gibbs sampling was chosen here because the
+dimensionality of integral (\ref{integral}) makes numerical
+integration very time-consuming.  A straightforward Monte Carlo method
+was also tried.  It was as accurate and ran faster when the posterior
+was close to the prior, but became very inaccurate when large numbers
+of observed claims moved the posterior far away from the prior.
+
+\section{Bibliography}
+
+\begin{enumerate}
+\item
+  Hoff, Peter D.  \emph{A First Course in Bayesian Statistical Methods}
+  Springer, 2009.
+\item
+  Mildenhall, Stephen J.  ``A Multivariate Bayesian Claim Count
+  Development Model With Closed Form Posterior and Predictive
+  Distributions.'  \emph{Casualty Actuarial Society Forum}
+  Winter, 2006.
+  \texttt{http://www.casact.org/pubs/forum/06wforum/06w455.pdf}
+\item
+  Palmer, Joseph M.  ``Increased Limits Ratemaking for Liability
+  Insurance''  Study Note, July 2006.  \texttt{http://www.casact.org/library/studynotes/palmer.pdf}
+\item Wikipedia.  ``Dirichlet distribution'' Retrieved May 2, 2010.\\ 
+    \texttt{http://en.wikipedia.org/wiki/Dirichlet\_distribution}
+  
+\end{enumerate}
+
+\section{Legal}
+
+<<Legal,echo=FALSE,results=tex>>=
+IncludeLegal("FAViR Project", 2010)
+@
+
+
+
+\end{document}

@@ -1371,8 +1371,8 @@ if (Last(colnames(mack.full.paid.tri)) == "Inf")
 mack.paid.plot.df <- FullTriangleDF(paid.devel.tri, mack.full.paid.tri)
 mack.paid.plot <- (ggplot(data=mack.paid.plot.df) +
               geom_line(aes(x=dev, y=value, color=actual, group=origin)) +
-              scale_colour_manual("Status",
-                         values=as.vector(favir.colors[c("M5", "M2")]), 
+              scale_colour_manual("Status", breaks=c(TRUE, FALSE),
+                         values=as.vector(favir.colors[c("M5", "M2")]),
                          labels=c("Actual", "Projected")) +
               labs(x="Development Age", y="Loss") +
               scale_x_continuous(breaks=unique(mack.paid.plot.df$dev)))
@@ -1419,7 +1419,7 @@ if (Last(colnames(mack.full.inc.tri)) == "Inf")
 mack.inc.plot.df <- FullTriangleDF(incurred.devel.tri, mack.full.inc.tri)
 mack.inc.plot <- (ggplot(data=mack.inc.plot.df) +
               geom_line(aes(x=dev, y=value, color=actual, group=origin)) +
-              scale_colour_manual("Status",
+              scale_colour_manual("Status", breaks=c(TRUE, FALSE),
                            values=as.vector(favir.colors[c("M5", "M2")]), 
                            labels=c("Actual", "Projected")) +
               labs(x="Development Age", y="Loss") +

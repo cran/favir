@@ -159,21 +159,22 @@ inforce.graph.df <- MakeInforceDF(p)
 period.colors <- rep(favir.colors[c("M5", "M4")],
                      length.out=length(unique(inforce.graph.df$rating.period)))
 names(period.colors) <- NULL # otherwise the names confuse ggplot
-basic.plot <- (ggplot(data=inforce.graph.df) +
-               geom_area(aes(x=year, y=inforce, group=rating.period,
-                             fill=rating.period),
-                         alpha=0.5, position="stack") +
-               scale_fill_manual(name="Rating Period", values=period.colors) +
-               ylim(0, 1) +
-               labs(x="Year", y="Inforce Premium"))
+basic.plot <- (ggplot(data=inforce.graph.df)
+               + geom_area(aes(x=year, y=inforce, group=rating.period,
+                               fill=rating.period),
+                           alpha=0.5, position="stack")
+               + scale_fill_manual(name="Rating Period", values=period.colors)
+               + ylim(0, 1)
+               + labs(x="Year", y="Inforce Premium"))
 
 # Now add the text to the graph
 midpoint.df <- FindPeriodMidpoints(inforce.graph.df)
 midpoint.df$rate.level <- MakeFormatter(digits=3, math.mode=FALSE)(
                                                    p$rate.level.df$rate.level)
-basic.plot <- (basic.plot +
-               geom_text(data=midpoint.df, color=favir.colors["A5"], size=4,
-                         aes(x=x, y=y, label=rate.level)))
+basic.plot <- (basic.plot
+               + geom_text(data=midpoint.df, color=favir.colors["A5"], size=4,
+                           aes(x=x, y=y, label=rate.level))
+               + opts(legend.position = "none"))
 IncludeGraph(basic.plot, caption="Basic Parallelogram",
              label="basic.graph", width=7 * 2.54, height=2.5 * 2.54)
 @ 
@@ -211,25 +212,26 @@ period.
 p2 <- para.mod$Parallelogram(written.df, rate.change.df, term.len)
 
 var.graph.df <- MakeInforceDF(p2)
-var.plot <- (ggplot(data=var.graph.df) +
-             geom_area(aes(x=year, y=inforce, group=rating.period,
-                           fill=rating.period),
-                       alpha=0.5, position="stack") +
-             scale_fill_manual(name="Rating Period", values=period.colors) +
-             labs(x="Year", y="Inforce Premium"))
+var.plot <- (ggplot(data=var.graph.df)
+             + geom_area(aes(x=year, y=inforce, group=rating.period,
+                             fill=rating.period),
+                         alpha=0.5, position="stack")
+             + scale_fill_manual(name="Rating Period", values=period.colors)
+             + labs(x="Year", y="Inforce Premium"))
 # Now add text
 var.midpoint.df <- FindPeriodMidpoints(var.graph.df)
 var.midpoint.df$rate.level <- MakeFormatter(digits=3, math.mode=FALSE)(
                                                     p2$rate.level.df$rate.level)
-var.plot <- (var.plot +
-             geom_text(data=var.midpoint.df, color=favir.colors["A5"], size=4,
+var.plot <- (var.plot
+             + geom_text(data=var.midpoint.df, color=favir.colors["A5"], size=4,
                          aes(x=x, y=y, label=rate.level)))
 
 # Finally add the written premium rate
 total.written <- para.mod$TotalWrittenFunc(p2)(var.graph.df$year)
-var.plot <- (var.plot +
-             geom_line(aes(x=var.graph.df$year, y=total.written),
-                       color=favir.colors["M5"], linetype=2))
+var.plot <- (var.plot
+             + geom_line(aes(x=var.graph.df$year, y=total.written),
+                         color=favir.colors["M5"], linetype=2)
+             + opts(legend.position = "none"))
 
 IncludeGraph(var.plot, caption="Parallelogram with Variable Premium Rate",
              label="variable.graph", width=7 * 2.54, height=2.5 * 2.54)
