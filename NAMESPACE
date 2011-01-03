@@ -1,4 +1,5 @@
-import(ggplot2, plyr, reshape, tools)
+import(ggplot2, plyr, tools)
+importFrom(reshape, melt, cast, recast)
 
 exportPattern("^[^\\.k]")
 

@@ -1,0 +1,632 @@
+% Copyright 2010 Benedict Escoto
+%
+% This file is part of FAViR.
+%
+% FAViR is free software: you can redistribute it and/or modify it
+% under the terms of the GNU General Public License as published by
+% the Free Software Foundation, either version 2 of the License, or
+% (at your option) any later version.
+%
+% FAViR is distributed in the hope that it will be useful, but WITHOUT
+% ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+% or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+% License for more details.
+%
+% You should have received a copy of the GNU General Public License
+% along with FAViR.  If not, see <http://www.gnu.org/licenses/>.
+
+<<SourceR,results=hide,echo=FALSE>>=
+library(favir)
+InitPaper()
+@ 
+
+<<LatexPrelude,echo=FALSE,results=tex>>=
+# Produce the latex introduction
+IncludePrelude("Basic Reserving: The Chain-Ladder and Additive Loss Methods",
+               "the R Working Party of the CAS")
+@
+
+\tableofcontents
+
+\section{Introduction}
+
+This paper demonstrates in R two classic methods of reserving: the
+Bornhuetter-Ferguson method (additive loss variant) and the
+chain-ladder method.  Both these methods operate on aggregate loss
+evaluations in the traditional triangle format.  Both these methods
+work on paid or on case-incurred loss.
+
+We chose these methods because they illustrate the two most basic
+possible assumptions for a given development period:
+
+\begin{description}
+  \item [chain-ladder] Developed loss will be a constant multiple of
+    reported loss at the start of the period.
+  \item [additive loss] Developed loss will have a constant ratio to
+    premium.
+\end{description}
+
+The paper computes reserve ranges for both methods.  Bootstrapping,
+provided by the \texttt{ChainLadder} R package by Markus Gesmann, is
+used for the chain-ladder method.  Simple variance assumptions imply
+ranges for the additive loss method.  Both methods assume loss is
+fully developed by the last development period---neither estimates
+tail factors or tail uncertainty.
+
+Finally, the paper presents a few graphs and statistics which help
+evaluate the appropriateness of each model.
+
+\section{Original Data}
+
+
+<<InputData,echo=FALSE,results=hide>>=
+### Begin Input Data
+tri.df <- data.frame(origin = c(1995, 1996, 1997, 1998,
+             1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 1995, 1996, 1997,
+             1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 1995, 1996, 1997,
+             1998, 1999, 2000, 2001, 2002, 2003, 2004, 1995, 1996, 1997, 1998,
+             1999, 2000, 2001, 2002, 2003, 1995, 1996, 1997, 1998, 1999, 2000,
+             2001, 2002, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 1995, 1996,
+             1997, 1998, 1999, 2000, 1995, 1996, 1997, 1998, 1999, 1995, 1996,
+             1997, 1998, 1995, 1996, 1997, 1995, 1996, 1995),
+                     dev = c(3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 15, 15, 15,
+             15, 15, 15, 15, 15, 15, 15, 15, 27, 27, 27, 27, 27, 27, 27, 27,
+             27, 27, 39, 39, 39, 39, 39, 39, 39, 39, 39, 51, 51, 51, 51, 51,
+             51, 51, 51, 63, 63, 63, 63, 63, 63, 63, 75, 75, 75, 75, 75, 75,
+             87, 87, 87, 87, 87, 99, 99, 99, 99, 111, 111, 111, 123, 123, 135),
+                     value = c(44, 42, 17, 10, 13, 2, 4, 2, 3, 4, 21, 13,
+             1331, 1244, 1088, 781, 937, 751, 1286, 911, 1398, 1130, 915,
+             3319, 3508, 3438, 3135, 3506, 2639, 3570, 5023, 4021, 3981,
+             4020, 4603, 4169, 4085, 4828, 3622, 4915, 6617, 4825, 4232,
+             4842, 4371, 4442, 5447, 3931, 5377, 7194, 4252, 4970, 4482,
+             4777, 5790, 4077, 5546, 4334, 5059, 4626, 4914, 6112, 4244,
+             4369, 5083, 4734, 5110, 6295, 4386, 5155, 4794, 5176, 4395,
+             5205, 4804, 4401, 5205, 4399))
+premium.df <- data.frame(origin=1995:2006, premium=6000)
+### End Input Data
+
+premium.df <- premium.df[order(premium.df$origin), ]
+Assert(all(sort(unique(tri.df$origin)) == premium.df$origin),
+       "Origins in loss data frame don't match origins in premium data frame")
+tri <- as.triangle(tri.df)
+dev.periods <- unique(tri.df$dev)
+@ 
+
+<<DisplayInput,echo=FALSE,results=tex>>=
+input.fdf <- FavirDF(cbind(origin=premium.df$origin,
+                           premium=premium.df$premium,
+                           as.data.frame(unclass(tri))),
+                     orientation="sideways",
+                     caption="Input Data", label="input data")
+FieldFormatters(input.fdf) <- list(origin=formatters$flat,
+                                   premium=formatters$comma)
+FieldHeadings(input.fdf) <- list(origin="Origin", premium="Premium")
+
+FieldGroup(input.fdf, "values") <- 3:ncol(input.fdf)
+GroupFormatter(input.fdf, "values") <- formatters$comma
+GroupHeading(input.fdf, "values") <- "Reported Loss by Development Age"
+print(input.fdf)
+@ 
+
+Figure \ref{input data} contains all the input data required for this paper:
+
+\begin{enumerate}
+  \item a loss triangle (aggregate losses by development age and origin)
+  \item the corresponding premium or exposure by origin.
+\end{enumerate}
+
+\noindent 
+Here ``origin'' refers to the period from which the loss emanates---it
+could mean accident year, report year, policy year, accident quarter,
+etc.  The loss could be paid or case-incurred, but we will use phrase
+``reported loss'' below.  Similarly, the calculations would be the
+same whether premium or exposure is given; below we will refer to
+premium and loss ratios for simplicity.
+
+\clearpage
+\section{Reserving Results}
+
+\subsection{Bootstrap Chain-Ladder Method}
+
+To produce reserve ranges, this paper applies bootstrapping to the
+traditional chain-ladder method.  The algorithm follows England and
+Verrall and is implemented in the ChainLadder R package by Markus
+Gesmann.  See\\ {\tt http://code.google.com/p/chainladder/} for more
+information on this package.
+
+<<BootstrapChainLadder,echo=FALSE,results=tex>>=
+# Only 250 iterations are run below to save time; the default is 999
+boot.obj <- BootChainLadder(Triangle = tri, R = 250, process.distr = "gamma")
+boot.df <- summary(boot.obj)$ByOrigin
+
+# This table is mostly just a better formatted version of boot.df
+bootstrap.fdf <- FavirDF(data.frame(origin=premium.df$origin,
+               latest=boot.df$Latest,
+               ult=boot.df[["Mean Ultimate"]],
+               ult.lr=boot.df[["Mean Ultimate"]] / premium.df$premium,
+               rev.mean=boot.df[["Mean IBNR"]],
+               rev.sd=boot.df[["SD IBNR"]],
+               rev.p75=boot.df[["IBNR 75%"]],
+               rev.p95=boot.df[["IBNR 95%"]]),
+                         caption="Results of bootstrap chain-ladder",
+                         label="bootstrap results")
+
+FieldFormatters(bootstrap.fdf) <- list(origin=formatters$flat,
+                                       ult.lr=formatters$percent)
+FieldHeadings(bootstrap.fdf) <- list(origin="Origin", latest="Latest",
+                                     ult="Loss", ult.lr="LR (\\%)",
+                                     rev.mean="Mean", rev.sd="Std. Dev.",
+                                     rev.p75="75th Pct", rev.p95="95th Pct")
+
+FieldGroup(bootstrap.fdf, "reserves") <- 5:8
+GroupHeading(bootstrap.fdf, "reserves") <- "Outstanding Reserves"
+FieldGroup(bootstrap.fdf, "ult") <- 3:4
+GroupHeading(bootstrap.fdf, "ult") <- "Mean Ultimate"
+
+boot.totals <- summary(boot.obj)$Totals
+SummaryRow(bootstrap.fdf) <- list(origin="Total",
+                latest=boot.totals[["Latest:", "Totals"]],
+                ult=boot.totals[["Mean Ultimate:", "Totals"]],
+                ult.lr=(boot.totals[["Mean Ultimate:", "Totals"]]
+                        / sum(premium.df$premium)),
+                rev.mean=boot.totals[["Mean IBNR:", "Totals"]],
+                rev.sd=boot.totals[["SD IBNR:", "Totals"]],
+                rev.p75=boot.totals[["Total IBNR 75%:", "Totals"]],
+                rev.p95=boot.totals[["Total IBNR 95%:", "Totals"]])
+print(bootstrap.fdf)
+@ 
+
+The results of the bootstrap chain-ladder are presented in figure
+\ref{bootstrap results}.  The mean ultimate and reserve amounts should
+match the traditional loss-weighted chain-ladder method, modulo
+simulation error.  Simulation error for very undeveloped periods
+(typically the last accident year) may be large, but in practice
+actuaries rarely use the chain-ladder method in these cases.
+
+The Mack method (see Mack) is an earlier way to estimate reserve
+uncertainty while preserving the chain-ladder method.  It is also
+implemented in the ChainLadder package and is computationally quicker
+than bootstrapping.  However, the Mack method does not lend itself to
+percentile calculations, such as the 75th and 95th percentiles shown
+in figure \ref{bootstrap results}.
+
+\subsection{Additive Loss Method}
+
+The additive loss method is arguably the simplest version of the
+Bornhuetter-Ferguson method.  Unfortunately for such a basic method,
+it goes under a mess of names: additive loss method, Cape Cod method,
+Stanard-Buhlmann, incremental loss ratio method, complementary loss
+ratio method (see Schmidt and Zocher).  The additive loss method uses
+premium estimates by year, but does not require a priori loss ratios.
+It assumes that the loss developing in each development period is a
+fixed percentage of premium across all origin years.
+
+For instance, suppose we are trying to reserve for accident year 2008
+which is 24 months old.  In the past, loss equal to 10\% of premium
+has developed between the ages of 24 and 36 months.  Then the additive
+loss method estimates that 10\% of accident year 2008 premium will
+develop in the next year.  It doesn't matter how much accident year
+2008 loss has developed so far.
+
+To develop reserve ranges, we will make the very simple assumption
+that, for a given development period, the incremental loss development
+for all origin periods will be independent normal distributions with
+the same mean, with variance inversely proportional to premium.  Then
+we can use simple constant regression with premium weights to estimate
+the process risk and parameter uncertainty.
+
+<<AdditiveLoss,echo=FALSE,results=hide>>=
+MakeALMResults <- function(tri, premium.df) {
+  # Return results of additive loss method on given cumulative tri and premium
+  #
+  # Results will be a list with four matricies:
+  # incr.mean - incremental mean loss ratios
+  # incr.stddev - standard deviation of incremental loss ratios
+  # cum.mean - cumulative mean loss ratios
+  # cum.stddev - standard deviation of cumulative mean loss ratios
+
+  incr.lr.tri <- apply(cum2incr(tri), 2, function(x) x / premium.df$premium)  
+  
+  # perform weighted regressions by devel period
+  model.summaries <- apply(incr.lr.tri, 2,
+            function(x) summary(lm(x ~ 1, weights=premium.df$premium)))
+  incr.fitted.lr <- sapply(seq(along=model.summaries),
+                           function(i) coef(model.summaries[[i]])[, "Estimate"])
+  
+  IncrSingle <- function(i, j) {
+    # Return mean and stddev incremental development for origin i and devel j
+    # stddev is the standard deviation of parameter and process risk
+    cur.val <- incr.lr.tri[i, j]
+    if (!is.na(cur.val)) # if loss observed, mean is given and no error
+      return(c(mean=cur.val, stddev=0))
+    process.stddev <- model.summaries[[j]]$sigma / sqrt(premium.df$premium[i])
+    param.stddev <- coef(model.summaries[[j]])[, "Std. Error"]
+    total.stddev <- sqrt(process.stddev^2 + param.stddev^2) # they are indep
+    # If not enough points to estimate stddev, assume stddev = mean
+    return(c(mean=incr.fitted.lr[j],
+             stddev=ifelse(is.na(total.stddev), abs(incr.fitted.lr[j]),
+               total.stddev)))
+  }
+  
+  MakeIncr <- function() {
+    # Make incremental mean and standard deviation matricies
+    incr.mean <- incr.stddev <- matrix(nrow=nrow(incr.lr.tri),
+                                       ncol=ncol(incr.lr.tri))
+    for (i in 1:nrow(incr.lr.tri)) {
+      for (j in 1:ncol(incr.lr.tri)) {
+        incr.single <- IncrSingle(i, j)
+        incr.mean[i, j] <- incr.single[1]
+        incr.stddev[i, j] <- incr.single[2]
+      }
+    }
+    return(list(mean=incr.mean, stddev=incr.stddev))
+  }
+  
+  incr.matricies <- MakeIncr()
+  cum.mean <- t(apply(incr.matricies[["mean"]], 1, cumsum)) # add across rows
+  # all errors are independent so just add variances
+  cum.stddev <- t(apply(incr.matricies[["stddev"]], 1,
+                        function(x) sqrt(cumsum(x^2))))
+  return(list(incr.mean=incr.matricies[["mean"]],
+              incr.stddev=incr.matricies[["stddev"]],
+              cum.mean=cum.mean,
+              cum.stddev=cum.stddev,
+              incr.fitted.lr=incr.fitted.lr,
+              cum.fitted.lr=cumsum(incr.fitted.lr)))
+}
+
+alm.results <- MakeALMResults(tri, premium.df)
+@ 
+
+The results of the additive loss method are shown in figure \ref{alm results}.
+
+<<ALMTable,echo=FALSE,results=tex>>=
+alm.df <- data.frame(origin=premium.df$origin,
+        latest=bootstrap.fdf$latest,
+        ult=NA,
+        ult.lr=alm.results$cum.mean[, ncol(alm.results$cum.mean)],
+        rev.mean=NA,
+        rev.sd=(premium.df$premium
+                * alm.results$cum.stddev[, ncol(alm.results$cum.stddev)]),
+        rev.p75=NA, rev.p95=NA)
+alm.df$ult <- premium.df$premium * alm.df$ult.lr
+alm.df$rev.mean <- alm.df$ult - alm.df$latest
+alm.df$rev.p75 <- alm.df$rev.mean + alm.df$rev.sd * qnorm(.75)
+alm.df$rev.p95 <- alm.df$rev.mean + alm.df$rev.sd * qnorm(.95)
+
+alm.fdf <- FavirDF(alm.df, caption="Results of additive loss method",
+                   label="alm results")
+FieldFormatters(alm.fdf) <- list(origin=formatters$flat,
+                                 ult.lr=formatters$percent)
+FieldHeadings(alm.fdf) <- list(origin="Origin", latest="Latest",
+                               ult="Loss", ult.lr="LR (\\%)",
+                               rev.mean="Mean", rev.sd="Std. Dev.",
+                               rev.p75="75th Pct", rev.p95="95th Pct")
+
+FieldGroup(alm.fdf, "reserves") <- 5:8
+GroupHeading(alm.fdf, "reserves") <- "Outstanding Reserves"
+FieldGroup(alm.fdf, "ult") <- 3:4
+GroupHeading(alm.fdf, "ult") <- "Mean Ultimate"
+
+alm.rev.sd <- sqrt(sum(alm.df$rev.sd^2)) # each origin is independent
+SummaryRow(alm.fdf) <- list(origin="Total",
+                latest=sum(alm.df$latest),
+                ult=sum(alm.df$ult),
+                ult.lr=sum(alm.df$ult) / sum(premium.df$premium),
+                rev.mean=sum(alm.df$rev.mean),
+                rev.sd=alm.rev.sd,
+                rev.p75=sum(alm.df$rev.mean) + alm.rev.sd * qnorm(.75),
+                rev.p95=sum(alm.df$rev.mean) + alm.rev.sd * qnorm(.95))
+print(alm.fdf)
+@ 
+
+\subsection{Comparison Plots}
+
+Figure \ref{devel comparison} compares the chain-ladder and additive
+loss projected development by origin.  The shaded areas represent the
+25th to 75th percentiles for each method.
+
+<<DevelComparison,echo=FALSE,results=tex>>=
+CumulativeBoot <- function() {
+  # Return matrix of bootstrap cumulative triangles
+  # This has same format as boot.obj$IBNR.Triangles
+  tri.incr <- cum2incr(tri)
+  result <- boot.obj$IBNR.Triangles
+  for (i in 1:dim(result)[3]) {
+    # First fill in observed incremental development
+    result[, , i] <- ifelse(is.na(tri.incr), result[, , i], tri.incr)
+    result[, , i] <- t(apply(result[, , i], 1, cumsum))
+  }
+  return(result)
+}
+cumboot <- CumulativeBoot()
+
+DevelCompDF <- function() {
+  # Return a data frame that can be used to make the faceted comparison graph
+  #
+  # It will have these fields: method, origin, devel age, mean, p25, p75
+  # where p25 and p75 are the 25th and 75th percentiles of ultimate LRs
+  GetSingle <- function(df) {
+    # Return rows of result df for single origin and dev combination
+    Assert(nrow(df) == 1)
+    result.df <- rbind(GetSingleBoot(df$origin.index, df$dev.index),
+                       GetSingleALM(df$origin.index, df$dev.index))
+    result.df$method <- c("Chain-Ladder", "Additive Loss")
+    return(result.df)
+  }
+
+  GetSingleBoot <- function(origin.index, dev.index) {
+    # Return mean, p25, and p75 for single origin and age, bootstrap method
+    samples <- (cumboot[origin.index, dev.index, ]
+                / premium.df$premium[origin.index])
+    return(data.frame(mean=mean(samples),
+                      p25=quantile(samples, .25), p75=quantile(samples, .75)))
+  }
+
+  GetSingleALM <- function(origin.index, dev.index) {
+    # Return mean, p25, and p75 for single origin and age, ALM method
+    num.stddev <- qnorm(.75)
+    mean <- alm.results$cum.mean[origin.index, dev.index]
+    stddev <- alm.results$cum.stddev[origin.index, dev.index]
+    return(data.frame(mean=mean, p25=mean - stddev * num.stddev,
+                      p75=mean + stddev * num.stddev))
+  }
+  
+  InputDF <- function() {
+    # Return data frame that lists origins and devs that we need to fill in
+    Assert(length(dev.periods) == ncol(tri),
+           "Mismatch: development ages and columns in triangle")
+    origin.indicies <- as.numeric(sapply(1:nrow(tri),
+                             function(x) rep(x, ncol(tri))))
+    dev.indicies <- rep(1:ncol(tri), nrow(tri))
+    input.df <- data.frame(origin.index=origin.indicies,
+                           origin=premium.df$origin[origin.indicies],
+                           dev.index=dev.indicies,
+                           dev=dev.periods[dev.indicies])
+    return(input.df)
+  }
+
+  input.df <- InputDF()
+  result.df <- ddply(input.df, .(origin.index, origin, dev.index, dev),
+                     GetSingle)
+  # Now take out last chain ladder evaluation because it's too noisy
+  return(result.df[!(result.df$origin.index == nrow(premium.df)
+                     & result.df$method == "Chain-Ladder"), ])
+}
+devel.comp.df <- DevelCompDF()
+manual.colors <- c(favir.colors["M5"], favir.colors["A5"])
+names(manual.colors) <- c("Chain-Ladder", "Additive Loss")
+devel.plot <- (ggplot(devel.comp.df)
+               + geom_ribbon(aes(x=dev, ymin=100 * p25, ymax=100 * p75,
+                                 group=method),
+                             fill=favir.colors["M4"], alpha=0.5)
+               + geom_line(aes(x=dev, y=100 * mean, group=method, color=method))
+               + facet_wrap(~ origin)
+               + labs(x="Development Age", y="Loss Ratio (%)")
+               + scale_colour_manual(name="Method", values=manual.colors))
+IncludeGraph(devel.plot, width=6.5 * 2.54,
+             caption="Method Development Comparison by Origin",
+             label="devel comparison")
+@
+
+\noindent
+Figure \ref{distribution plot} compares the two methods' distribution
+of ultimate losses by origin.  The histograms represent number of
+samples from the bootstrap chain-ladder.  Our simple additive loss
+model produces the continuous density curve which has been scaled
+above to match the histogram.
+
+<<UltDistributions,echo=FALSE,results=tex>>=
+num.bootstraps <- dim(cumboot)[3]
+BootUltDist <- function() {
+  # Return data frame with bootstrap ultimates by origin
+  # Each row is one simulation
+  num.devel <- dim(cumboot)[2]
+  df <- data.frame(origin=as.numeric(sapply(premium.df$origin,
+                     function(origin) rep(origin, num.bootstraps))),
+                   ult=NA)
+  for (i in 1:nrow(premium.df)) {
+    begin.index <- num.bootstraps * (i-1)
+    indicies <- (begin.index + 1):(begin.index + num.bootstraps)
+    df$ult[indicies] <- cumboot[i, num.devel, ] / premium.df$premium[i]
+  }
+  return(df)
+}
+boot.ult.df <- BootUltDist()
+
+ALMUltDist <- function() {
+  # Return data frame with additive loss ultimates by origin
+  tol <- .02 # resolution of density plot on x axis
+  lr.range <- range(c(alm.results$cum.mean - alm.results$cum.stddev * 2,
+                      alm.results$cum.mean + alm.results$cum.stddev * 2))
+  xvals <- seq(from=lr.range[1], to=lr.range[2], by=tol)
+  SingleOrigin <- function(origin.index) {
+    # Return data frame with points for single origin period
+    origin <- premium.df$origin[origin.index]
+    mean <- alm.results$cum.mean[origin.index, ncol(tri)]
+    stddev <- alm.results$cum.stddev[origin.index, ncol(tri)]
+    yvals <- dnorm(xvals, mean=mean, sd=stddev)
+    # density must be compatible with number of bootstraps
+    return(data.frame(origin=origin, lr=xvals,
+                      count=yvals * num.bootstraps / sum(yvals)))
+  }
+  return(adply(1:nrow(premium.df), 1, SingleOrigin))
+}
+alm.dist.df <- ALMUltDist()
+
+# last origin is very volatile for CL; exclude these when setting limits 
+xlimits <- range(boot.ult.df$ult[boot.ult.df$origin
+                                 != premium.df$origin[nrow(premium.df)]])
+combined.dist.plot <- (ggplot(boot.ult.df)
+                       + geom_histogram(aes(x=ult, group=origin), binwidth=.05)
+                       + geom_line(aes(x=lr, y=count), data=alm.dist.df)
+                       + facet_wrap(~ origin)
+                       + labs(x="Ultimate Loss Ratio", y="Density"))
+                       #+ limits(xlimits, "x")) this creates some stacking
+                       # problem for some reason
+IncludeGraph(combined.dist.plot, width=6.5 * 2.54,
+             caption="Distribution of Method Ultimates by Origin",
+             label="distribution plot")
+@ 
+\clearpage
+
+\section{Graphical Diagnostics}
+
+Graphs are popular for evaluating the appropriateness of a stochastic
+reserving model (see Barnett and Zehnwirth, Brosius, and Venter for
+more information on their use as reserving diagnostics).
+
+<<RegressionPlot,echo=FALSE,results=tex>>=
+cum.lr.tri <- apply(tri, 2, function(x) x / premium.df$premium)
+incr.lr.tri <- apply(cum2incr(tri), 2, function(x) x / premium.df$premium)
+period.names <- sapply(2:ncol(tri),
+                       function(j) paste(colnames(cum.lr.tri)[j-1], "to",
+                                         colnames(cum.lr.tri)[j]))
+
+RegressionDF <- function() {
+  # Return data frame for regression plot by development age
+  df <- data.frame(dev.period=NULL, lr.start=NULL, lr.devel=NULL)
+  
+  for (j in 2:ncol(cum.lr.tri)) {
+    df <- rbind(df, data.frame(origin.index=1:nrow(premium.df),
+                               origin=premium.df$origin,
+                               premium=premium.df$premium,
+                               dev.end=dev.periods[j],
+                               dev.end.index=j,
+                               dev.period=period.names[j-1],
+                               lr.start=cum.lr.tri[, j-1],
+                               lr.devel=incr.lr.tri[, j]))
+  }
+  return(df[!is.na(df$lr.devel), ])
+}
+regression.df <- RegressionDF()
+# This data frame holds the horizontal line data for the ALM fitting
+hline.df <- data.frame(lr=alm.results$incr.fitted.lr[2:ncol(tri)],
+                       dev.period=period.names)
+# This holds the sloped lines like chain ladder assumes
+clline.df <- ddply(regression.df, .(dev.period),
+                   function(df) data.frame(slope=(sum(df$premium * df$lr.devel)
+                                             / sum(df$premium * df$lr.start))))
+
+reg.plot <- (ggplot(regression.df)
+             + geom_point(aes(x=lr.start * 100, y=lr.devel * 100))
+             + geom_hline(aes(yintercept=lr * 100), data=hline.df,
+                          color=favir.colors["A5"])
+             + geom_abline(aes(slope=slope), data=clline.df,
+                           color=favir.colors["M5"])
+             + facet_wrap(~ dev.period)
+             + labs(x="Starting Loss Ratio",
+                    y="Loss Ratio Development in Period")
+             + expand_limits(y=0, x=0)) # always show origin
+IncludeGraph(reg.plot, width=6.5 * 2.54,
+             caption="Comparison of Model Fits by Development Period",
+             label="regression plot")
+@
+
+Figure \ref{regression plot} plots incremental loss ratio vs starting
+loss ratio for each development period.  If the chain-ladder model
+worked perfectly, the incremental loss ratio would be proportional to
+the starting loss ratio; all the points would fall on a line going
+through the origin.  If the Bornhuetter-Ferguson method worked
+perfectly, the incremental loss ratio would be independent of starting
+loss ratio; all the points would fall on a horizontal line.  Thus
+graph like figure \ref{regression plot} is a simple way to visually
+judge which if either method is working.
+
+Residuals are another way to judge the appropriateness of a model.  A
+model's residual is an actual observed value minus the models
+predicted value.  Figure \ref{residual plot} shows residuals by
+development period, loss ratio, origin, and calendar period.  The
+smoothing line is produced by local polynomial regression and may aid
+the reader in quickly picking up trends.
+
+If the residuals show a trend, it's a warning sign that the reserving
+method may be inappropriate.  For instance, if a company's claims
+department strengthens its case reserving, it might cause a method to
+overpredict development (have a negative residual) for those calendar
+periods.  To take another example, if rate adequacy is slipping, then
+the additive loss method might show a positive trend in the residuals
+by origin, but the chain-ladder method may continue to fit well.
+
+Assuming displays such as figures \ref{regression plot} and
+\ref{residual plot} can be produced automatically (as in R), they give
+actuaries a quick and effective way to evaluate reserving methods.
+
+<<Residuals,echo=FALSE,results=tex>>=
+ResidualsDF <- function() {
+  # Return data frame with residuals from both chain ladder and ALM
+  regression.df$alm.pred <- alm.results$incr.fitted.lr[
+                                     regression.df$dev.end.index]
+  regression.df$alm.resid <- regression.df$lr.devel - regression.df$alm.pred
+  regression.df$boot.pred <- (clline.df$slope[regression.df$dev.end.index - 1]
+                              * regression.df$lr.start)
+  regression.df$boot.resid <- regression.df$lr.devel - regression.df$boot.pred
+
+  return(data.frame(origin=rep(regression.df$origin, 2),
+                    dev.end=rep(regression.df$dev.end, 2),
+                    lr.start=rep(regression.df$lr.start, 2),
+                    cal.year=rep(regression.df$origin.index
+                                 + regression.df$dev.end.index, 2),
+                    resid=c(regression.df$boot.resid, regression.df$alm.resid),
+                    method=c(rep("Chain-Ladder", nrow(regression.df)),
+                             rep("Additive Loss", nrow(regression.df)))))
+}
+resid.df <- ResidualsDF()
+
+resid.dev.plot <- (ggplot(resid.df)
+                   + geom_point(aes(x=dev.end, y=resid * 100))
+                   + facet_wrap(~ method)
+                   + geom_smooth(aes(x=dev.end, y=resid * 100), se=FALSE)
+                   + labs(x="Development Age", y="LR Residual"))
+resid.lr.plot <- (ggplot(resid.df)
+                  + geom_point(aes(x=lr.start * 100, y=resid * 100))
+                  + facet_wrap(~ method)
+                  + geom_smooth(aes(x=lr.start * 100, y=resid * 100), se=FALSE)
+                  + labs(x="Starting Loss Ratio (%)", y="LR Residual"))
+resid.origin.plot <- (ggplot(resid.df)
+                      + geom_point(aes(x=origin, y=resid * 100))
+                      + facet_wrap(~ method)
+                      + geom_smooth(aes(x=origin, y=resid * 100), se=FALSE)
+                      + labs(x="Origin Period", y="LR Residual"))
+resid.cal.plot <- (ggplot(resid.df)
+                   + geom_point(aes(x=cal.year, y=resid * 100))
+                   + facet_wrap(~ method)
+                   + geom_smooth(aes(x=cal.year, y=resid * 100), se=FALSE)
+                   + labs(x="Calendar Period", y="LR Residual"))
+IncludeGrid(list("1.1"=resid.dev.plot, "2.1"=resid.lr.plot,
+                 "3.1"=resid.origin.plot, "4.1"=resid.cal.plot),
+            width=5 * 2.54, height=8 * 2.54, label="residual plot",
+            caption="Comparison of Residuals")
+@ 
+\clearpage
+
+\section{Bibliography}
+
+\begin{enumerate}
+  \item Barnett, G. and Zehnwirth, B.  ``Best Estimates for Reserves''
+    \emph{PCAS} 2000, LXXXVII, p245--303.
+  \item Brosius, E.  ``Development Using Credibility'' \emph{CAS Study
+    Note} 1993.
+    \texttt{http://www.casact.org/library/studynotes/brosius6.pdf}
+  \item England, PD and Verrall, RJ.  ``Stochastic Claims Reserving in General Insurance'' \emph{British Actuarial Journal} 8, III. 2002.  \texttt{http://www.actuaries.org.uk/\_\_data/assets/pdf\_file/0014/31721/sm0201.pdf}
+  \item Friedland, J.F.  \emph{Estimating Unpaid Claims Using Basic
+    Techniques}.  Casualty Actuarial Society, 2009.  \texttt{http://www.casact.org/pubs/Friedland\_estimating.pdf}
+  \item Mack, Thomas.  ``Which Stochastic Model Is Underlying The
+    Chain Ladder Method?'' \emph{IME} 15, 1993.
+    \texttt{http://www.casact.org/pubs/forum/95fforum/95ff229.pdf}
+  \item Schmidt, Klaus and Zocher, Mathias.  ``The
+    Bornhuetter-Ferguson Principle'' \emph{Variance} 2008 p85--110.
+    \texttt{http://www.variancejournal.org/issues/02-01/85.pdf}
+  \item Venter, Gary G.  ``Testing the Assumptions of Age-to-Age
+    Factors'' \emph{Proceedings of the CAS} 1998.
+    \texttt{"http://www.casact.org/pubs/proceed/proceed98/980807.pdf}
+\end{enumerate}
+
+
+\section{Legal}
+<<Legal,echo=FALSE,results=tex>>=
+IncludeLegal(author="CAS R Working Group", year=2010)
+@ 
+
+\end{document}
+

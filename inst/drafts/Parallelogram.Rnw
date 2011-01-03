@@ -60,16 +60,24 @@ are significant, or if rate change information is not available.
 
 \section{Required Input Data}
 
+
+<<InputData,echo=FALSE,results=hide>>=
+### Begin Input Data
+rate.change.df <- data.frame(year=c(2002, 2003.5, 2004.1, 2004.4, 2005.5),
+                             rate.change=c(.07, -.03, .12, .02, .1))
+term.len <- 1
+written.df <- data.frame(year=2001:2005, written=c(30, 45, 75, 30, 55))
+periods.out <- 2001:2006
+### End Input Data
+@ 
+
 \label{inputs}
 To apply the parallelogram method, you need a record of rate changes
 by year, where each rate change is expressed as a percent of premium
 before the rate change.  This information is put into a data frame as
 shown in figure \ref{rate.change.df}.  
 
-<<InputData,echo=FALSE,results=tex>>=
-rate.change.df <- data.frame(year=c(2002, 2003.5, 2004.1, 2004.4, 2005.5),
-                             rate.change=c(.07, -.03, .12, .02, .1))
-term.len <- 1
+<<RateChanges,echo=FALSE,results=tex>>=
 rate.change.fdf <- FavirDF(rate.change.df, label="rate.change.df",
                            caption="Historical Rate Changes")
 FieldFormatters(rate.change.fdf) <- list(year=MakeFormatter(digits=1,
@@ -83,22 +91,20 @@ print(rate.change.fdf)
 \noindent The term length has also been set at
 \textcolor{colorM5}{\Sexpr{term.len}}.
 
-This implementation optionally accepts a data frame that lists the
-rate at which written premium is written by period in units of money
-(e.g. dollars) per year.  This is shown in figure \ref{written.df}.
+The traditional parallelogram method assumes premium is written
+evenly.  This implementation allows the written rate to vary; this can
+change the resulting on-level factors.  Figure \ref{written.df} shows
+the written premium rate as a step function.  Each row indicates the
+start of an interval and the rate (in units of money per year) at
+which premium is written in that interval.  Within each interval,
+premium is assumed to be written at a constant rate.
 
 <<WrittenDF,echo=FALSE,results=tex>>=
-written.df <- data.frame(year=2001:2005,
-                         written=c(30, 45, 75, 30, 55))
 written.fdf <- FavirDF(written.df, label="written.df",
                        caption="Rate of Premium Written by Period")
 FieldHeadings(written.fdf) <- list(year="Period Start", written="Premium Rate")
-FieldFormatters(written.fdf) <- list(year=formatters$flat)
+FieldFormatters(written.fdf) <- list(year=formatters$flat1)
 print(written.fdf)
-@ 
-
-<<OutPeriods,echo=FALSE,results=hide>>=
-periods.out <- 2001:2006
 @ 
 
 Finally, we need a list of non-overlapping periods that are interested
@@ -106,7 +112,6 @@ in.  The method will compute one on-level factor per period.  They
 computed for each period as output.  The periods chosen here are those
 between these years: 
 \textcolor{colorM5}{(\Sexpr{paste(periods.out, collapse=", ")})}.
-
 
 \section{Method Output}
 
@@ -131,9 +136,10 @@ MakeInforceDF <- function(p, spacing=0.05) {
                          inforce=p$inforce.funcs[[i]](xvals))
     inforce.graph.df <- rbind(inforce.graph.df, new.df)
   }
-  inforce.graph.df$rating.period <- as.factor(inforce.graph.df$rating.period)
-  # now reverse so parallelograms plot in the right direction
-  return(inforce.graph.df[nrow(inforce.graph.df):1, ])
+  # Reverse the rating period so they are layered in the right order
+  # otherwise we get parallelograms that go in the wrong direction
+  inforce.graph.df$neg.period <- as.factor(-inforce.graph.df$rating.period)
+  return(inforce.graph.df)
 }
 
 FindPeriodMidpoints <- function(inforce.graph.df) {
@@ -141,6 +147,7 @@ FindPeriodMidpoints <- function(inforce.graph.df) {
   Helper <- function(df) {
     # Return midpoint of one rating period
     df <- df[df$inforce > 0, ]
+    if(nrow(df) == 0) return(data.frame(x=NA, y=NA))
     middle.row <- as.integer((nrow(df) + 1)/2)
     x <- df$year[middle.row]
     y <- sum(inforce.graph.df$inforce[inforce.graph.df$year == x]) / 2
@@ -160,11 +167,10 @@ period.colors <- rep(favir.colors[c("M5", "M4")],
                      length.out=length(unique(inforce.graph.df$rating.period)))
 names(period.colors) <- NULL # otherwise the names confuse ggplot
 basic.plot <- (ggplot(data=inforce.graph.df)
-               + geom_area(aes(x=year, y=inforce, group=rating.period,
-                               fill=rating.period),
+               + geom_area(aes(x=year, y=inforce, group=neg.period,
+                               fill=neg.period),
                            alpha=0.5, position="stack")
                + scale_fill_manual(name="Rating Period", values=period.colors)
-               + ylim(0, 1)
                + labs(x="Year", y="Inforce Premium"))
 
 # Now add the text to the graph
@@ -213,8 +219,8 @@ p2 <- para.mod$Parallelogram(written.df, rate.change.df, term.len)
 
 var.graph.df <- MakeInforceDF(p2)
 var.plot <- (ggplot(data=var.graph.df)
-             + geom_area(aes(x=year, y=inforce, group=rating.period,
-                             fill=rating.period),
+             + geom_area(aes(x=year, y=inforce, group=neg.period,
+                             fill=neg.period),
                          alpha=0.5, position="stack")
              + scale_fill_manual(name="Rating Period", values=period.colors)
              + labs(x="Year", y="Inforce Premium"))

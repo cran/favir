@@ -1,0 +1,127 @@
+<<SourceR,results=hide,echo=FALSE>>=
+library(favir)
+library(actuar)
+library(MASS)
+library(POT)
+InitPaper()
+@ 
+
+<<LatexPrelude,echo=FALSE,results=tex>>=
+IncludePrelude("The POT package", "Avraham Adler")
+@ 
+
+\begin{abstract}
+  This paper is intended to briefly demonstrate the \textbf{POT}
+  package for use in Extreme Value Theory.
+\end{abstract}
+
+<<Initialize, echo=F>>=
+options(scipen=5, digits=5)
+@
+\noindent
+
+\section{Introduction}
+Extreme Value Theory (EVT) is one of the methods used by actuaries to estimate the tails of loss severity distributions. McNeil [\ref{McNeil}] discusses how the
+Generalized Pareto distribution (GPD) can be used to to model the tails of extreme events.
+\footnote{A distinction must be made between the Generalized Pareto of
+  Extreme Value Theory and the Generalized Pareto of actuarial
+  literature as defined in Klugman, Panjer, and Wilmot (KPW)
+  [\ref{Klugman}]. The GPD of EVT is a two-parameter pareto
+  distribution where the shape and scale factors are less correlated
+  than the classic two-parameter pareto. The GPD of KPW is a
+  three-parameter distribution.}
+There exist a number of packages for the `R' statistical platform
+which may be used to investigate data in this framework. One of them
+is called \textbf{`POT'}, or the \textbf{P}eaks \textbf{O}ver
+\textbf{T}hreshold package [\ref{POT}]. The package does more than
+mere Generalized Pareto fitting, but lends itself nicely to such. This
+brief paper assumes a basic knowledge of EVT, and is focused on
+demonstrating the use of the POT package.
+
+\section{Example}
+Using \texttt{actuar} [\ref{Dutang}] we can create a dataset for
+investigation. We will set a specific seed so that the results are
+reproducible.
+<<RawData>>=
+set.seed(254)
+test.data <- rpareto(n=1000, shape = 1.5, scale = 100000)
+@
+\noindent
+Let's take a look at this data.  Percentiles are below and histograms
+are in figures \ref{hist.basic} and \ref{hist.log}.
+
+<<EmpiricalDiag>>=
+summary(test.data)
+@ 
+
+<<Histograms,echo=FALSE,results=tex>>=
+hist.basic <- qplot(test.data, geom="histogram") + xlab("Value") + ylab("Count")
+IncludeGraph(hist.basic, caption="Basic Histogram", label="hist.basic",
+             width=6 * 2.54, height=3 * 2.54)
+
+hist.log <- hist.basic + scale_x_log10()
+IncludeGraph(hist.log, caption="Log-scale Histogram", label="hist.log",
+             width=6 * 2.54, height=3 * 2.54)
+@ 
+
+\noindent
+In EVT analysis, one often wants to identify the threshold over which the tail exhibits Pareto behavior. One of the primary tools used is the ``Sample Mean Excess'' or 
+``Mean Residual Life'' plot. Where this plot begins to appears linear is often a decent estimate of an appropriate threshold. The POT package has a function to display such a plot: \texttt{mrlplot}.
+<<fig=T>>=
+par(mfrow=c(1,2))
+mrlplot(test.data)
+mrlplot(test.data, xlim=c(0,1000000))
+@
+\noindent
+
+Looking at the plot, a reasonable selection for the threshold would be 300,000. Once the threashold is selected, POT uses the \texttt{fitgpd} command to fit a GPD with the selected threshold. 
+<<>>=
+GPD1<-fitgpd(test.data, threshold=300000)
+GPD1
+@
+\noindent
+
+The default parameters that \texttt{fitgpd} passes to \texttt{optim} often prevent good convergence, so it pays to re-run the optimization passing a vector of parameter scales.
+<<>>=
+GPD2<-fitgpd(test.data, threshold=300000, control=list(parscale=c(100000,.1)))
+GPD2
+@
+\noindent
+
+Note how the fit is now significantly better. Lastly, POT comes with built-in plotting methods, so fits can be analyzed and compared. Below, the two GPD fits will be plotted using default methods.
+<<fig=T>>=
+par(mfrow=c(2,2))
+plot(GPD1)
+@
+\noindent
+\clearpage
+<<fig=T>>=
+par(mfrow=c(2,2))
+plot(GPD2)
+@
+\noindent
+
+The POT package contains much more functionality than Generalized Pareto fitting and there are other EVT packages which can be found on CRAN such as \textbf{evir, evd}, etc.
+
+\section{Bibliography}
+
+\begin{enumerate}
+  \item Christophe Dutang, Vincent Goulet, and Mathieu Pigeon. ``actuar: An r package for actuarial science''.  \emph{Journal of Statistical Software}
+    \label{Dutang}
+  \item Stuart A. Klugman, Harry H. Panjer, and Gordon E. Willmot.
+    \emph{Loss models: from data to decisions} Wiley series in
+    probability and statistics, New York, NY, 1998.
+    \label{Klugman}
+  \item Alexander J. McNeil. ``Estimating the tails of loss severity distributions using extreme value theory.'' \emph{ASTIN Bulletin}, 27(1):117--138, May 1997.
+    \label{McNeil}
+  \item Mathieu Ribatet. \emph{POT: Generalized Pareto Distribution and Peaks Over Threshold},  2009.  R package version 1.1-0.
+    \label{POT}
+\end{enumerate}
+
+\section{Legal}
+
+<<Legal,echo=FALSE,results=tex>>=
+IncludeLegal("Avraham Adler", 2010)
+@
+
+\end{document}

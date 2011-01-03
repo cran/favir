@@ -25,15 +25,40 @@ InitPaper <- function() {
 kGraphDir <- "favir-graphs"
 .InitGraphDir <- function() {
   # Make sure the favir-graphs directory exists
-  if(file.access(kGraphDir, mode=0) != 0)
+  if (file.access(kGraphDir, mode=0) != 0)
     dir.create(kGraphDir)
 }
 
-FavirSweave <- function(filenames) {
+FavirSweave <- function(filenames, change.dir=TRUE, clean=TRUE) {
   # Convert some sweave files into PDFs
-  for (filename in filenames) {
+  Helper <- function(filename) {
+    # Run sweave and texi2dvi on given filename
+    #
+    # These tasks are moved to Helper so in case there is an error we
+    # can catch it and restore the correct working directory.
+    if (change.dir) {
+      path.comps <- filename %SplitOn% .Platform$file.sep
+      if (length(path.comps) > 1) {
+        new.dir <- do.call(file.path, 
+                           as.list(path.comps[1:(length(path.comps) - 1)]))
+        print(paste("Changing to directory", new.dir))
+        setwd(new.dir)
+      }
+      filename <- tail(path.comps, 1)
+    } 
     Sweave(paste(filename, ".Rnw", sep=""))
-    texi2dvi(paste(filename, ".tex", sep=""), pdf=TRUE)
+    texi2dvi(paste(filename, ".tex", sep=""), pdf=TRUE, clean=clean)
+    cat(paste("'", filename, "'.pdf written.\n", sep=""))
+  }
+    
+  for (filename in filenames) {
+    if (change.dir)
+      old.dir <- getwd()
+    result <- try(Helper(filename))
+    if (change.dir && !is.null(old.dir))
+      setwd(old.dir) # restore old directory
+    if (class(result) == "try-error")
+      stop(result) # reraise the caught error
   }
 }
 
@@ -58,7 +83,7 @@ OnError <- function() {
 
 Assert <- function(boolean, err.msg=NULL) {
   # Abort and display traceback and err.msg if boolean is false
-  if(isTRUE(boolean))
+  if (isTRUE(boolean))
     return(invisible(NULL))
   call.list <- as.list(match.call())
   cat("----------------------------------------------------\n", file=stderr())
@@ -74,7 +99,7 @@ Assert <- function(boolean, err.msg=NULL) {
 AssertSingle <- function(..., err.msg=NULL) {
   # Raise an error message if value does not have length 1
   lengths <- sapply(list(...), length) # vector of lengths
-  if(all(lengths == 1))
+  if (all(lengths == 1))
     return(NULL)
   bad.index <- which(lengths != 1)[1]
   bad.value <- list(...)[[bad.index]]
@@ -372,8 +397,14 @@ RowColors <- function(fdf) {
 
 DefaultRowColoring <- function(df, primary="white", secondary="colorM1") {
   # Return the default row coloring for data frame df
-  if (nrow(df) <= 5)
-    return(rep(primary, nrow(df)))
+  n <- nrow(df)
+  if (n <= 4) {
+    return(rep(primary, n))
+  } else if (n == 5) {
+    return(c(primary, primary, secondary, secondary, primary))
+  } else if (n == 6) {
+    return(c(primary, primary, secondary, secondary, primary, primary))
+  }
   return(ifelse((1:nrow(df) - 1) %% 6 <= 2, primary, secondary))
 }
 
@@ -1038,6 +1069,8 @@ IncludeGrid <- function(graph.list, ...) {
   update_geom_defaults("smooth", aes(colour=favir.colors["A5"]))
   update_geom_defaults("bar", aes(colour=favir.colors["M3"],
                                   fill=favir.colors["M3"]))
+  update_geom_defaults("boxplot", aes(colour=favir.colors["M3"],
+                                      fill=favir.colors["M3"]))
 }
 .SetTheme()
 
@@ -1100,24 +1133,28 @@ kPrelude2 <- ("%%%%%%%%%%%%%%% End Colors, Start Logo
 \\usepackage{fancyhdr}
 \\pagestyle{fancy}
 \\renewcommand{\\headrule}{{\\color{colorM5}%
-  \\hrule width\\headwidth height\\headrulewidth \\vskip-\\headrulewidth}}
-\\rfoot{\\favirlogo\\hspace{2cm}}
-\\cfoot{\\thepage}
+  \\hrule width\\headwidth height\\headrulewidth \\vskip-\\headrulewidth}}\n")
+kPrelude3 <- "\\rfoot{\\favirlogo\\hspace{2cm}}\n"
+kPrelude4 <- ("\\cfoot{\\thepage}
 
 %%%%%%%%%%%%%%%% End Headers, Preamble
 
 \\begin{document}
 \\thispagestyle{plain}")
 
-IncludePrelude <- function(title, author, subtitle="", header.lines="") {
+IncludePrelude <- function(title, author, subtitle="", header.lines="",
+                           include.logo=TRUE) {
   # Insert the latex prelude into the document
   cat(kPrelude1)
   cat(.MakeColorLines(favir.colors))
   cat(header.lines)
   cat(kPrelude2)
+  if (include.logo)
+    cat(kPrelude3)
+  cat(kPrelude4)
 
   AssertSingle(title, author, subtitle)
-  cat(.MakeTitleLines(title, author, subtitle))
+  cat(.MakeTitleLines(title, author, subtitle, include.logo))
 }
 
 .MakeColorLines <- function(named.color.vec) {
@@ -1139,17 +1176,19 @@ IncludePrelude <- function(title, author, subtitle="", header.lines="") {
 }
 
 kURL <- "http://www.favir.net"
-.MakeTitleLines <- function(title, author, subtitle) {
+.MakeTitleLines <- function(title, author, subtitle, include.logo=TRUE) {
   # Return latex code for the title and author of a paper
   title.line <- paste("\\begin{center}{\\LARGE", title, "}\\\\")
   subtitle.line <- ifelse(nchar(subtitle) == 0, "",
                           paste("\\vspace{1ex}{\\large", subtitle, "}\\\\"))
   author.line <- paste("\\vspace{1em}{\\large By ", author, "}\\\\")
-  logo.line <- paste("{\\footnotesize
+  if (include.logo) {
+    logo.line <- paste("{\\footnotesize
 \\vspace{2em} \\hspace{-1.9in} \\scalebox{2}{\\favirlogo}\\\\
 \\vspace{1ex}
 \\noindent This paper is produced mechanically as part of FAViR.\\\\
 See \\texttt{", kURL, "} for more information.\\\\ \\vspace{1em}}", sep="")
+  } else logo.line <- ""
   return(paste(title.line, subtitle.line, author.line, logo.line,
                "\\end{center}\n", sep="\n"))
 }

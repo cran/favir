@@ -15,9 +15,18 @@ IncludePrelude("The Parallelogram Method", "Benedict Escoto")
 ###################################################
 ### chunk number 3: InputData
 ###################################################
+### Begin Input Data
 rate.change.df <- data.frame(year=c(2002, 2003.5, 2004.1, 2004.4, 2005.5),
                              rate.change=c(.07, -.03, .12, .02, .1))
 term.len <- 1
+written.df <- data.frame(year=2001:2005, written=c(30, 45, 75, 30, 55))
+periods.out <- 2001:2006
+### End Input Data
+
+
+###################################################
+### chunk number 4: RateChanges
+###################################################
 rate.change.fdf <- FavirDF(rate.change.df, label="rate.change.df",
                            caption="Historical Rate Changes")
 FieldFormatters(rate.change.fdf) <- list(year=MakeFormatter(digits=1,
@@ -29,21 +38,13 @@ print(rate.change.fdf)
 
 
 ###################################################
-### chunk number 4: WrittenDF
+### chunk number 5: WrittenDF
 ###################################################
-written.df <- data.frame(year=2001:2005,
-                         written=c(30, 45, 75, 30, 55))
 written.fdf <- FavirDF(written.df, label="written.df",
                        caption="Rate of Premium Written by Period")
 FieldHeadings(written.fdf) <- list(year="Period Start", written="Premium Rate")
-FieldFormatters(written.fdf) <- list(year=formatters$flat)
+FieldFormatters(written.fdf) <- list(year=formatters$flat1)
 print(written.fdf)
-
-
-###################################################
-### chunk number 5: OutPeriods
-###################################################
-periods.out <- 2001:2006
 
 
 ###################################################
@@ -62,9 +63,10 @@ MakeInforceDF <- function(p, spacing=0.05) {
                          inforce=p$inforce.funcs[[i]](xvals))
     inforce.graph.df <- rbind(inforce.graph.df, new.df)
   }
-  inforce.graph.df$rating.period <- as.factor(inforce.graph.df$rating.period)
-  # now reverse so parallelograms plot in the right direction
-  return(inforce.graph.df[nrow(inforce.graph.df):1, ])
+  # Reverse the rating period so they are layered in the right order
+  # otherwise we get parallelograms that go in the wrong direction
+  inforce.graph.df$neg.period <- as.factor(-inforce.graph.df$rating.period)
+  return(inforce.graph.df)
 }
 
 FindPeriodMidpoints <- function(inforce.graph.df) {
@@ -72,6 +74,7 @@ FindPeriodMidpoints <- function(inforce.graph.df) {
   Helper <- function(df) {
     # Return midpoint of one rating period
     df <- df[df$inforce > 0, ]
+    if(nrow(df) == 0) return(data.frame(x=NA, y=NA))
     middle.row <- as.integer((nrow(df) + 1)/2)
     x <- df$year[middle.row]
     y <- sum(inforce.graph.df$inforce[inforce.graph.df$year == x]) / 2
@@ -90,21 +93,21 @@ inforce.graph.df <- MakeInforceDF(p)
 period.colors <- rep(favir.colors[c("M5", "M4")],
                      length.out=length(unique(inforce.graph.df$rating.period)))
 names(period.colors) <- NULL # otherwise the names confuse ggplot
-basic.plot <- (ggplot(data=inforce.graph.df) +
-               geom_area(aes(x=year, y=inforce, group=rating.period,
-                             fill=rating.period),
-                         alpha=0.5, position="stack") +
-               scale_fill_manual(name="Rating Period", values=period.colors) +
-               ylim(0, 1) +
-               labs(x="Year", y="Inforce Premium"))
+basic.plot <- (ggplot(data=inforce.graph.df)
+               + geom_area(aes(x=year, y=inforce, group=neg.period,
+                               fill=neg.period),
+                           alpha=0.5, position="stack")
+               + scale_fill_manual(name="Rating Period", values=period.colors)
+               + labs(x="Year", y="Inforce Premium"))
 
 # Now add the text to the graph
 midpoint.df <- FindPeriodMidpoints(inforce.graph.df)
 midpoint.df$rate.level <- MakeFormatter(digits=3, math.mode=FALSE)(
                                                    p$rate.level.df$rate.level)
-basic.plot <- (basic.plot +
-               geom_text(data=midpoint.df, color=favir.colors["A5"], size=4,
-                         aes(x=x, y=y, label=rate.level)))
+basic.plot <- (basic.plot
+               + geom_text(data=midpoint.df, color=favir.colors["A5"], size=4,
+                           aes(x=x, y=y, label=rate.level))
+               + opts(legend.position = "none"))
 IncludeGraph(basic.plot, caption="Basic Parallelogram",
              label="basic.graph", width=7 * 2.54, height=2.5 * 2.54)
 
@@ -132,25 +135,26 @@ print(basic.olef.fdf)
 p2 <- para.mod$Parallelogram(written.df, rate.change.df, term.len)
 
 var.graph.df <- MakeInforceDF(p2)
-var.plot <- (ggplot(data=var.graph.df) +
-             geom_area(aes(x=year, y=inforce, group=rating.period,
-                           fill=rating.period),
-                       alpha=0.5, position="stack") +
-             scale_fill_manual(name="Rating Period", values=period.colors) +
-             labs(x="Year", y="Inforce Premium"))
+var.plot <- (ggplot(data=var.graph.df)
+             + geom_area(aes(x=year, y=inforce, group=neg.period,
+                             fill=neg.period),
+                         alpha=0.5, position="stack")
+             + scale_fill_manual(name="Rating Period", values=period.colors)
+             + labs(x="Year", y="Inforce Premium"))
 # Now add text
 var.midpoint.df <- FindPeriodMidpoints(var.graph.df)
 var.midpoint.df$rate.level <- MakeFormatter(digits=3, math.mode=FALSE)(
                                                     p2$rate.level.df$rate.level)
-var.plot <- (var.plot +
-             geom_text(data=var.midpoint.df, color=favir.colors["A5"], size=4,
+var.plot <- (var.plot
+             + geom_text(data=var.midpoint.df, color=favir.colors["A5"], size=4,
                          aes(x=x, y=y, label=rate.level)))
 
 # Finally add the written premium rate
 total.written <- para.mod$TotalWrittenFunc(p2)(var.graph.df$year)
-var.plot <- (var.plot +
-             geom_line(aes(x=var.graph.df$year, y=total.written),
-                       color=favir.colors["M5"], linetype=2))
+var.plot <- (var.plot
+             + geom_line(aes(x=var.graph.df$year, y=total.written),
+                         color=favir.colors["M5"], linetype=2)
+             + opts(legend.position = "none"))
 
 IncludeGraph(var.plot, caption="Parallelogram with Variable Premium Rate",
              label="variable.graph", width=7 * 2.54, height=2.5 * 2.54)

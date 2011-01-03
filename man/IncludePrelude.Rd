@@ -8,7 +8,7 @@
 }
 
 \usage{
-IncludePrelude(title, author, subtitle="", header.lines="")
+IncludePrelude(title, author, subtitle="", header.lines="", include.logo=TRUE)
 }
 
 \arguments{
@@ -16,6 +16,7 @@ IncludePrelude(title, author, subtitle="", header.lines="")
   \item{author}{The author of the paper}
   \item{subtitle}{Paper subtitle, or the empty string if none}
   \item{header.lines}{Additional string to include the LaTeX header}
+  \item{include.logo}{Whether or not to include the "FaViR" logo}
 }
 
 \details{The latex code printed by this function loads the necessary

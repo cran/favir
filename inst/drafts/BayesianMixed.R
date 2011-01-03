@@ -181,8 +181,7 @@ answer.graph <- (ggplot()
                  + geom_vline(aes(xintercept=c(claims, claims),
                                   section=c(rep("Density", length(claims)),
                                             rep("Weights", length(claims)))),
-                              color=favir.colors["A3"], size=0.25,
-                              position="dodge")
+                              color=favir.colors["A3"], size=0.25)
                  + geom_bar(aes(x=weights.graph.df$x,
                                 y=weights.graph.df$y,
                                 color=weights.graph.df$dist,
@@ -208,6 +207,6 @@ IncludeGraph(answer.graph, height=8, width=18,
 ###################################################
 ### chunk number 8: Legal
 ###################################################
-IncludeLegal("FAViR Project", 2010)
+IncludeLegal("Benedict Escoto", 2010)
 
 

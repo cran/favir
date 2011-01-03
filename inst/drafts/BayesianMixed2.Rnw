@@ -1,0 +1,598 @@
+<<SourceR,results=hide,echo=FALSE>>=
+library(favir)
+library(runjags)
+InitPaper()
+@
+
+<<LatexPrelude,echo=FALSE,results=tex>>=
+IncludePrelude("Bayesian Claim Severity Part 2",
+            author="Benedict Escoto",
+            subtitle="Mixed Exponentials with Trend, Censoring, and Truncation",
+            header.lines="\\usepackage{amsmath}")
+@
+
+\begin{abstract}
+\noindent
+  This is an continuation of the FAViR paper ``Bayesian Claim Severity
+  with Mixed Distributions''.  The application is the same: the
+  actuary is trying to produce a claim severity distribution and has a
+  prior Dirichlet over mixed exponential distribution that s/he wants
+  to update with observed claim data.
+  
+  However, in this paper the data is allowed to have a flat severity
+  trend, and the claim data may be truncated or censored.  Instead of
+  a custom Gibbs sampler, JAGS is used to compute the posterior
+  parameters.
+\end{abstract}
+
+\section{Introduction}
+
+The earlier FAViR paper ``Bayesian Claim Severity with Mixed
+Distributions'' (Escoto) derived a claim severity distribution from
+observed claim amounts using traditional Bayesian updating.  There,
+each claim had a mixed exponential severity distribution, conditional
+on ``parameter risk'' which was represented by a Dirichlet
+distribution.
+
+Under these conditions, the marginal distribution of each claim was
+also a mixed exponential.  Thus, an actuary could start with a prior
+mixed exponential severity distribution (from ISO or some other
+source) and refine it with available claim data.  The resulting
+marginal distribution would be the correct credibility-weighted
+mixture of the prior distribution and the claim data, but would still
+be mixed exponential in form.
+
+This paper is a continuation of ``Bayesian Claim Severity with Mixed
+Distributions''.  The basic probabilistic model is the same: a mixed
+exponential severity with Dirichlet parameters.  Unlike that paper
+however, here we handle three complications often seen in practice:
+
+\begin{enumerate}
+  \item censored data (policy limits),
+  \item truncated data (deductibles), and
+  \item severity trend.
+\end{enumerate}
+
+Trend parameter risk (represented by a gamma distribution) is added to
+the model because trend credibility needs to be estimated
+simultaneously with severity.  For instance, increasing average claim
+severity in the most recent years may indicate a high severity trend;
+or maybe a few huge losses happened to occur recently.  Bayesian
+statistics properly weighs these possibilities.
+
+To compute the posterior distribution, this paper uses Just Another
+Gibbs Sampler (JAGS), a cross-platform general purpose open source
+MCMC engine, while the previous paper used a custom Gibbs sampler.  As
+a result, this paper is slower and has more dependencies, but is also
+easier to modify, assess for convergence, and run in parallel chains.
+Knowledge of MCMC theory is not necessary to use this paper.
+
+\section{Required input data}
+
+<<InputData,results=hide,echo=FALSE>>=
+actual.means <- c(50, 100, 500, 1500, 5000, 20000) * 1000
+prior.weights <- c(.3, .25, .25, .1, .07, .03)
+
+alpha0 <- 20
+alpha <- prior.weights * alpha0
+trend.prior.mu <- .05
+trend.prior.sigma <- .01
+
+claim.df <- data.frame(x = c(33750, 1e6, 22707, 54135, 174524, 19661,
+                             140735, 1e6, 1127, 316483),
+                       age = c(3, 1, 1, 1, 3, 2, 2, 3, 1, 2),
+                       truncation = c(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                       capped = c(FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, 
+                         FALSE, TRUE, FALSE, FALSE))
+@
+
+This section displays all the initial data required by this paper.
+The initial inputs can be grouped into four categories: the observed
+claim data, the prior means and weights of the mixed exponential
+severity distribution, the prior severity uncertainty (represented by
+a Dirichlet distribution), and the prior trend mean and standard
+deviation.
+
+\subsection{Claim Data}
+
+The claim data used is shown in figure \ref{claim data}.  For each
+claim we need to know its severity, whether or not it was censored at
+policy limits, its deductible (truncation threshold), and the age of
+the claim.
+
+<<claimTable,results=tex,echo=FALSE>>=
+claim.fdf <- FavirDF(claim.df, caption="Observed Claim Data",
+                     label="claim data")
+claim.fdf$capped <- ifelse(claim.df$capped, "Yes", "No")
+FieldHeadings(claim.fdf) <- list(x="Amount", age="Age",
+                                 truncation="Deductible", capped="Capped?")
+print(claim.fdf)
+@ 
+
+\subsection{Mixed Exponential}
+
+Figure \ref{priorMixedTable} shows the means and weights of a mixed
+exponential distribution.  This determines the model's marginal claim
+severity prior to conditionalization on the claim data (i.e. the
+severity distribution you'd expect for the very next claim if no
+detailed claim data were available).
+
+<<priorMixed,results=tex,echo=FALSE>>=
+# Check means and weights
+Assert(sum(prior.weights) == 1, "Prior weights need to sum to 1")
+Assert(length(actual.means) == length(prior.weights),
+       "Mixed exponential weights and means need the same length")
+m <- length(actual.means)
+
+# print table
+prior.mixed.fdf <- FavirDF(data.frame(weight=prior.weights, mean=actual.means),
+                           caption="Prior Means and Weights",
+                           label="priorMixedTable")
+FieldFormatters(prior.mixed.fdf) <- list(weight=formatters$percent1)
+FieldHeadings(prior.mixed.fdf) <- list(weight="Weights (\\%)", mean="Means")
+SummaryRow(prior.mixed.fdf) <- list(weight="Avg",
+                                    mean=sum(prior.mixed.fdf$mean
+                                      * prior.mixed.fdf$weight))
+print(prior.mixed.fdf)
+@ 
+
+\subsection{Dirichlet Uncertainty}
+
+Although the means and weights of the mixed exponential distribution
+determine the margin severity distribution, we also need to know how
+certain we are that these parameters are accurate.  Are they just a
+rough estimate, and may be far off, or are we sure that the true
+distribution is very similar?  This uncertainty can be summarized as
+$\alpha_0$, the sum of the Dirichlet parameters.  Here we picked a
+value of \textbf{\textcolor{colorM5}{\Sexpr{alpha0}}}.
+
+See section \ref{choosingAlpha} for guidance on choosing this parameter.
+
+\subsection{Trend}
+
+Finally, we need a prior distribution over the trend rate.  The trend
+is applied to each claim by age.  For instance, if the trend rate is
+7\%, then claims of age 2.5 are expected to be $1.07^{-2.5}$ times as
+severe as claims of age 0.
+
+We assume trend is constant over time, but the parameter uncertainty
+is modeled as a gamma distribution, shifted so that the zero point
+indicates --100\% trend.  Choosing a mean and standard deviation
+sufficies to determine the gamma parameters.  In this paper, the trend
+mean is \textbf{\textcolor{colorM5}{\Sexpr{trend.prior.mu}}} and the
+trend standard deviation is
+\textbf{\textcolor{colorM5}{\Sexpr{trend.prior.sigma}}}.
+
+\section{Results}
+
+<<defineFunctions,results=hide,echo=FALSE>>=
+rdirichlet <- function(n, alpha) {
+  # Simulate n results from a dirichlet distribution with parameters alpha
+  # Each row is an independent draw
+  dim <- length(alpha)
+  y <- matrix(data=NA, nrow=n, ncol=dim)
+  for (i in seq(length=dim))
+    y[, i] <- rgamma(n, alpha[i])
+  for (j in seq(length=n))
+    y[j, ] <- y[j, ] / sum(y[j, ])
+  return(y)
+}
+
+rMixedExpon <- function(n, weights, means) {
+  # Simulate data points from a mixed exponential distribution
+  Assert(sum(weights) == 1, paste("Sum of weights equals", weights))
+  m <- length(weights)
+  Assert(m == length(means))
+
+  sampled.means <- means[sample(m, n, weights, replace=TRUE)]
+  return(rexp(n, 1/sampled.means))
+}
+
+ExponExpLiL <- function(mean, start, end) {
+  # Return the expected loss in layer for an exponential distribution
+  # with layer attaching at start and exhausting at end
+  return(mean * (exp(-start / mean) - exp(-end / mean)))
+}
+
+MixedExponExpLiL <- function(weights, means, start, end) {
+  # Return expected loss in layer for mixed exponential distribution
+  # with layer attaching at start and exhausting at end
+  return(sum(weights * means * (exp(-start / means) - exp(-end / means))))
+}
+
+DirichletStddev <- function(alpha, cond.exp) {
+  # Return the standard deviation of the expected value of g(x) given
+  # a set of weights.  cond.exp[i] should be E[g(x) | x is from bucket
+  # i].
+  m <- length(alpha)
+  Assert(m == length(cond.exp))
+  
+  alpha0 <- sum(alpha)
+  a <- alpha / alpha0
+  variance <- 0
+  for (j in 1:m) {
+    variance <- variance + cond.exp[j]^2 * a[j] * (1 - a[j])
+    for (k in 1:m)
+      if (j != k)
+        variance <- variance - cond.exp[j] * cond.exp[k] * a[j] * a[k]
+  }
+  return(sqrt(variance / (alpha0 + 1)))
+}
+
+DirichletLayerStddev <- function(alpha, means, start, end) {
+  # Return the standard deviation of expected layer losses
+  cond.exp <- sapply(means, function(mean) ExponExpLiL(mean, start, end))
+  return(DirichletStddev(alpha, cond.exp))
+}
+@ 
+
+<<runModel,results=hide,echo=FALSE>>=
+# Calculate trend gamma parameters
+trend.scale <- trend.prior.sigma^2 / (1 + trend.prior.mu)
+trend.shape <- (1 + trend.prior.mu) / trend.scale
+
+# Define JAGS inputs
+jags.data <- list(claims=(claim.df$x[!claim.df$capped]
+                          - claim.df$truncation[!claim.df$capped]),
+                  capped.claims=(claim.df$x[claim.df$capped]
+                                 - claim.df$truncation[claim.df$capped]),
+                  alpha=alpha,
+                  means=actual.means,
+                  ones=rep(1, length(claim.df$x[claim.df$capped])),
+                  ages=claim.df$age[!claim.df$capped],
+                  capped.ages=claim.df$age[claim.df$capped],
+                  trend.shape=trend.shape,
+                  trend.rate=1 / trend.scale)
+jags.init <- list(means=list(weights=prior.weights),
+                  equal=list(weights=rep(1/m, m)))
+model <- "model { 
+  weights ~ ddirch(alpha)
+  trend.factor ~ dgamma(trend.shape, trend.rate)
+  for (i in 1:length(claims)) {
+    buckets[i] ~ dcat(weights)
+    mu[i] <- means[buckets[i]] / trend.factor^ages[i]
+    claims[i] ~ dexp(1 / mu[i])
+  }
+  for (i in 1:length(capped.claims)) {
+    capped.buckets[i] ~ dcat(weights)
+    capped.mu[i] <- means[capped.buckets[i]] / trend.factor^capped.ages[i]
+    prob.capped[i] <- exp(-capped.claims[i] / capped.mu[i])
+    ones[i] ~ dbern(prob.capped[i])
+  }
+}"
+
+# Run the actual model
+thin.factor <- 3
+n.chains <- 2
+model.out <- autorun.jags(model, data=jags.data, inits=jags.init,
+                          monitor=c("weights", "trend.factor"), 
+                          method="parallel", # comment this out for windows
+                          startburnin=1000, startsample=5000,
+                          n.chains=n.chains, interactive=FALSE, thin=thin.factor)
+# Above, can use method="parallel" at least on linux to use multiple processors
+model.summary <- summary(model.out$mcmc)
+
+# These are useful diagnostics using the coda package
+#plot(model.out$mcmc)
+#traceplot(model.out$mcmc)
+#autocorr.diag(model.out$mcmc)
+#autocorr.plot(model.out$mcmc)
+@
+
+This section presents the results of conditionalizing the Bayesian
+model on the observed claim data using MCMC.  A total of
+\textbf{\textcolor{colorM5}{\Sexpr{n.chains * thin.factor * nrow(model.out[["mcmc"]][[1]])}}} samples were computed.  Figure
+\ref{weightResults} shows the prior and posterior marginal weights.
+
+<<weightResults,results=tex,echo=FALSE>>=
+new.weights.fdf <- FavirDF(data.frame(prior.weight=prior.weights,
+                      mean=actual.means,
+                      post.weight=model.summary$statistics[1:m, "Mean"],
+                      post.stddev=model.summary$statistics[1:m,
+                        "Time-series SE"],
+                      mean2=actual.means),
+                           caption="Prior vs Posterior Exponential Weights",
+                           label="weightResults")
+FieldFormatters(new.weights.fdf) <- list(prior.weight=formatters$percent1,
+                                         post.weight=formatters$percent1,
+                                         post.stddev=formatters$percent2)
+FieldHeadings(new.weights.fdf) <- list(prior.weight="Weight (\\%)",
+         mean="Mean", post.weight="Weight (\\%)",
+         post.stddev="Error (\\%)", mean2="Mean")
+FieldGroup(new.weights.fdf, "priors") <- c("prior.weight", "mean")
+GroupHeading(new.weights.fdf, "priors") <- "Prior to Data"
+FieldGroup(new.weights.fdf, "posterior") <- c("post.weight", "post.stddev",
+                                              "mean2")
+GroupHeading(new.weights.fdf, "posterior") <- "Posterior to Data"
+SummaryRow(new.weights.fdf) <- list(prior.weight="Avg",
+      mean=sum(new.weights.fdf$prior.weight * actual.means), post.stddev="Avg",
+      mean2=sum(new.weights.fdf$post.weight * actual.means))
+print(new.weights.fdf)
+@
+
+The error column is an estimate of the standard error of the MCMC
+method.  This can be decreased through running more simulations.
+Because the error is estimated using time-series methods, it takes
+autocorrelation into account.  The other exhibits assume this error is
+acceptably small and can be ignored.  The \texttt{coda} package is
+compatible with JAGS and includes more tools for MCMC error-testing
+and diagnostics; a few sample commands are given in the source code to
+this paper.
+
+Figures \ref{lil boxplot}, \ref{trend boxplot}, and \ref{ilf boxplot}
+show the prior and posterior expected loss in layer, trend, and ILFs.
+The ILFs are based solely on expected loss costs and do not take into
+account risk loads, expenses, etc.  In these figures, each boxplot
+shows the 10th, 25th, 50th, 75th, and 90th percentiles of the
+corresponding distribution.
+
+<<lossInLayerPlots,results=tex,echo=FALSE>>=
+layers <- c(0, 5e5, 7.5e5, 1e6, 1.5e6, 2e6, 3e6, 5e6)
+layer.names <- c("500x0", "250x500", "250x750", "500x1M", "500x1.5M",
+                 "1Mx2M", "2Mx3M")
+
+MakeLiLDF <- function(means, layers, weight.matrix) {
+  # Make a data frame with loss in layer amounts
+  #
+  # Result has a row for each layer, and simulation trial
+  # weight.matrix has a set of weights for each row
+  Helper <- function(layer.num) {
+    start <- layers[layer.num]
+    end <- layers[layer.num + 1]
+    lil <- apply(weight.matrix, 1,
+                 function(weights) MixedExponExpLiL(weights, means, start, end))
+    return(data.frame(layer.num=layer.num, loss.in.layer=lil))
+  }
+  return(mdply(data.frame(layer.num=1:(length(layers) - 1)), Helper))
+}
+
+prior.weight.sim <- rdirichlet(1000, alpha)
+Assert(n.chains==2, "Change this and the next line if n.chains != 2")
+posterior.weight.sim <- rbind(model.out$mcmc[[1]][, 1:m],
+                              model.out$mcmc[[2]][, 1:m])
+prior.lil.df <- MakeLiLDF(actual.means, layers, prior.weight.sim)
+loss.in.layer.df <- MakeLiLDF(actual.means, layers, posterior.weight.sim)
+total.lil.df <- rbind(prior.lil.df, loss.in.layer.df)
+total.lil.df$dist <- c(rep("Prior", nrow(prior.lil.df)),
+                       rep("Posterior", nrow(loss.in.layer.df)))
+total.lil.df$lil.short <- total.lil.df$loss.in.layer / 1000
+BoxPlotHelper <- function(sub.df)
+  return(data.frame(ymax=quantile(sub.df$lil.short, .9),
+                    upper=quantile(sub.df$lil.short, .75),
+                    middle=quantile(sub.df$lil.short, .5),
+                    lower=quantile(sub.df$lil.short, .25),
+                    ymin=quantile(sub.df$lil.short, .1),
+                    layer.name=layer.names[sub.df$layer.num[1]]))
+boxplot.df <- ddply(total.lil.df, .(layer.num, dist), BoxPlotHelper)
+boxplot.df$dist <- factor(boxplot.df$dist, levels=c("Prior", "Posterior"))
+plot.colors <- c(favir.colors["M3"], favir.colors["M4"])
+names(plot.colors) <- NULL
+lil.boxplot <- (ggplot(data=boxplot.df)
+      + geom_boxplot(aes(ymax=ymax, upper=upper, middle=middle, lower=lower,
+                         ymin=ymin, fill=dist, x=layer.name),
+                     stat="identity", 
+                     colour=favir.colors["M5"])
+      + ylim(0, 350)
+      + scale_fill_manual(name="Distribution", values=plot.colors)
+      + labs(x="Layer", y="Expected Loss in Layer ($000)"))
+IncludeGraph(lil.boxplot, height=9, width=18,
+             caption="Prior vs Posterior Loss in Layer", label="lil boxplot")
+@ 
+
+<<trendResults,results=tex,echo=FALSE>>=
+trend.samples <- c(model.out$mcmc[[1]][, m+1], model.out$mcmc[[2]][, m+1])
+probs <- c(.1, .25, .5, .75, .9)
+post.quants <- (quantile(trend.samples, probs=probs) - 1) * 100
+prior.quants <- (qgamma(probs, shape=trend.shape,
+                        scale=trend.scale) - 1) * 100
+trend.df <- rbind(data.frame(dist="Prior",
+                             ymin=prior.quants[1], lower=prior.quants[2],
+                             middle=prior.quants[3],
+                             upper=prior.quants[4], ymax=prior.quants[5]),
+                  data.frame(dist="Posterior",
+                             ymin=post.quants[1], lower=post.quants[2],
+                             middle=post.quants[3],
+                             upper=post.quants[4], ymax=post.quants[5]))
+trend.df$dist <- factor(trend.df$dist, levels=c("Prior", "Posterior"))
+trend.plot <- (ggplot(data=trend.df)
+         + geom_boxplot(aes(ymax=ymax, upper=upper, middle=middle, lower=lower,
+                            ymin=ymin, fill=dist, x=dist),
+                        stat="identity", colour=favir.colors["M5"])
+         + scale_fill_manual(name="Distribution", values=plot.colors)
+         + labs(x="Distribution", y="Trend (%)")
+         + opts(legend.position="none"))
+IncludeGraph(trend.plot, height=8, width=6, caption="Trend Results",
+             label="trend boxplot")
+@
+
+<<ILFResults,results=tex,echo=FALSE>>=
+ilf.base <- 1e6
+
+ILFQuantiles <- function(weight.sim, limit) {
+  # Return a one-row data frame with quantiles for a single ILF
+  SingleILF <- function(weights) {
+    # Return ILFs for a single mixed exponential distribution
+    return(MixedExponExpLiL(weights, actual.means, 0, limit)
+           / MixedExponExpLiL(weights, actual.means, 0, ilf.base))
+  }
+  ilf.samples <- apply(weight.sim, 1, SingleILF)
+  quants <- quantile(ilf.samples, probs=c(.1, .25, .5, .75, .9))
+  return(data.frame(ymin=quants[1], lower=quants[2], middle=quants[3],
+                    upper=quants[4], ymax=quants[5]))
+  
+}
+input.df <- data.frame(dist=c(rep("Prior", length(layers) - 1),
+                         rep("Posterior", length(layers) - 1)),
+                       limit=c(layers[-1], layers[-1]))
+
+MDHelper <- function(sub.df) {
+  # Helper function for mdply; return quantile data frame
+  if (sub.df$dist=="Prior")
+    return(ILFQuantiles(prior.weight.sim, sub.df$limit))
+  else return(ILFQuantiles(posterior.weight.sim, sub.df$limit))
+}
+ilf.plot.df <- ddply(input.df, .(dist, limit), MDHelper)
+ilf.plot.df$dist <- factor(ilf.plot.df$dist, levels=c("Prior", "Posterior"))
+ilf.plot.df$display.lim <- factor(ilf.plot.df$limit / 1000)
+
+ilf.plot <- (ggplot(data=ilf.plot.df)
+             + geom_boxplot(aes(ymax=ymax, upper=upper, middle=middle,
+                                lower=lower, ymin=ymin, fill=dist,
+                                x=display.lim),
+                            stat="identity", colour=favir.colors["M5"])
+             + scale_fill_manual(name="Distribution", values=plot.colors)
+             + labs(x="Limit ($000)", y="Increased Limit Factor"))
+IncludeGraph(ilf.plot, height=8, width=18,
+             caption="Prior vs Posterior ILF Distribution", label="ilf boxplot")
+@ 
+
+\section{Probabilistic Model}
+
+Here is the formal description of the Bayesian hierarchical claim
+severity model.  It can be divided into process and parameter risk.
+
+Process risk:
+
+\begin{align*}
+x_i|b_i & \sim g(\mbox{Exponential}(\frac{1}{\mu_{b_i} d^{t_i}}))\\
+b_i|w_1, \ldots, w_m & \sim \mbox{Categorical}(w_1, \ldots, w_m) \\
+\end{align*}
+
+Parameter risk:
+
+\begin{align*}
+w_1, \ldots, w_m & \sim \mbox{Dirichlet}(\alpha_1, \ldots, \alpha_m) \\
+d & \sim \mbox{Gamma}(k, \theta) \\
+\end{align*}
+
+The function $g$ above represents censoring and/or truncation.  The
+index $i$ ranges over the number of observed claims.  The means of the
+mixed exponential are $\mu_1, \ldots, \mu_m$ and $t$ is the age of the
+claim.  See ``Bayesian Claim Severity with Mixed Distributions'' for
+more information.
+
+Mathematically, the only distinction between parameter and process
+parts of the model is that all the claims are assumed to have the same
+parameter risk variables but the process risk parameters vary per
+claim.  For example, there is one the trend parameter $d$ which
+affects all claims, but each claim will get its own instance of $x$
+and $b$.  Conditional on $d$ and $w_1, \ldots, w_m$, the distribution
+of each claim is independent.
+
+\subsection{Choosing $\alpha_0$}
+\label{choosingAlpha}
+
+In the input data section, the paramater $\alpha_0$ was used to
+summarize our uncertainty around the mixed exponential prior
+distribution.  Intuitively, this parameter can be thought of the
+number of claim observations encapsulated by the prior mixed
+exponential.  So, after we observe $\alpha_0$ claims, the resulting
+distribution will depend equally on our prior and the observed data.
+Because intuition is not of much help in selecting a particular
+value, we will use this result:
+
+If $X$ is a mixed exponential distribution (with fixed means)
+depending on weights $w_1, \ldots, w_m$, and $g(x)$ is a real
+function, then
+
+\begin{align}
+  \mbox{Var}[\mbox{E}[g(x)|w_1, \ldots, w_m]]
+  & = \mbox{Var}[\sum_{j=1}^m w_j \mbox{E}[g(x)|b=j]]
+    = \mbox{Var}[\sum_{j=1}^m w_j g_j]\\
+  & = \sum_{j=1}^m g_j^2 \mbox{Var}[w_j]
+      + \sum_{j\not=k} g_j g_k \mbox{Cov}[w_j, w_k] \\
+  & = \sum_{j=1}^m g_j^2 \frac{a_j(1-a_j)}{\alpha_0+1} 
+      + \sum_{j\not=k} g_j g_k \frac{-a_j a_k}{\alpha_0 + 1} \label{fromDirichlet}
+\end{align}
+
+\noindent therefore \[\alpha_0 = \sigma^{-2} (\sum_{j=1}^m g_j^2 a_j (1-a_j)
+                            - \sum_{j\not=k} g_j g_k a_j a_k) - 1 \]
+                            
+\noindent where $g_j = \mbox{E}[g(x)|b=j]$, $a_j =
+\frac{\alpha_j}{\alpha_0}$, and (\ref{fromDirichlet}) follows from the
+properties of the Dirichlet distribution (see ``Bayesian Claim
+Severity with Mixed Distributions'' for more about the Dirichlet
+distribution).
+                            
+Suppose the actuary may feel that the expected value of the true claim
+distribution capped at \$1M may be \$50,000 off from the expected
+capped value implied by the prior mixed distribution.  Then by setting
+$g(X) = \mbox{min}(X, 1\mbox{Mil})$, $g_j = \mu_j(1 -
+e^\frac{1e6}{\mu_j})$ and the above result can be used to calculate
+$\alpha_0$.
+
+In this paper, we set $\alpha_0 =
+\textbf{\textcolor{colorM5}{\Sexpr{alpha0}}}$, which implies that the
+standard deviation of loss in the first million layer is 
+\textbf{\textcolor{colorM5}{\Sexpr{round(DirichletLayerStddev(alpha, actual.means, 0, 1e6))}}}.
+
+\section{Computation}
+
+The posterior distribution of the probabilistic model specified in
+section \ref{Results} is probably not analytically soluable.  The
+version of the model in ``Bayesian Claim Severity with Mixed
+Distributions'' (which had no trend parameter) actually could be
+solved analytically, but the solution was not tractable.
+
+In these situations, Monte Carlo Markov Chain (MCMC) techniques are
+extremely useful.  They have revolutionized Bayesian statistics in the
+last few decades.  One MCMC algorithm is called Gibbs sampling.  The
+earlier paper implemented its own Gibbs sampler.  However, there are
+now dedicated software packages such as WinBUGS which allow users to
+specify custom Bayesian hierarchical models in an intuitive modelling
+language, and then solve those models using using Gibbs sampling and
+other MCMC algorithms.
+
+This paper uses JAGS (Just Another Gibbs Sampler), which is an
+improved version of WinBUGS that is open source and cross platform.
+See Plummer (2003) for more information.  JAGS can be used seamlessly
+from R through the \texttt{runjags} package.  The JAGS model
+description for this paper takes about a dozen lines of code.
+
+Compared to custom code, JAGS (and WinBUGS) are easier to use and
+modify, but much slower.  On my computer (Intel Core 2 Duo 6600
+running Linux), the model takes about 10 minutes to process 600
+claims.  A tuned MCMC algorithm written in a low-level language like C
+would probably be 10--50 times faster.  Also, MCMC techniques are
+highly parallelizable, so more cores increase speed almost linearly.
+
+\section{Conclusion}
+
+This paper credibility weighs prior beliefs about claim severity with
+observed claim data.  The actuary starts with a prior mixed
+exponential severity distribution (perhaps from an external source
+such as ISO) and uses standard Bayesian conditionalization on the
+claim data to arrive at a posterior weights distribution.
+Complications such as trend, censoring, and truncation are handled.
+
+This method may be practical whenever there is a shortage of claim
+data.  If a huge number of relevant claims were available, there would
+be no need for Bayesian statistics---the actuary could simply use the
+(possibly smoothed) empirical distribution.  But when the number of
+data points is insufficient for non-parametric statistics, actuaries
+frequently turn to maximum likelihood methods.  If prior distributions
+are available, Bayesian methods such as the one presented here are
+superior to maximum likelihood methods because they incorporate that
+information.
+
+\section{Bibliography}
+
+\begin{enumerate}
+\item
+  Escoto, Benedict M.  ``Bayesian Claim Severity with Mixed
+  Distributions.''  \emph{FAViR Drafts}.\\
+  \texttt{http://www.favir.net/local--files/papers/BayesianMixed2.pdf}
+\item Plummer, Martyn.  ``JAGS: A Program for Analysis of Bayesian
+  Graphical Models Using Gibbs Sampling'', \emph{Proceedings of the
+    3rd International Workshop on Distributed Statistical Computing},
+    (DSC 2003), Vienna, Austria. \\
+  \texttt{http://www.ci.tuwien.ac.at/Conferences/DSC-2003/Proceedings/Plummer.pdf}
+\end{enumerate}
+
+\section{Legal}
+
+<<Legal,echo=FALSE,results=tex>>=
+IncludeLegal("Benedict Escoto", 2010)
+@
+
+\end{document}
